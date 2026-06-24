@@ -4,7 +4,7 @@ import { RefreshCw, Plus, Trash2, Pencil, Check, KeyRound } from "lucide-react";
 import { useSettingsStore } from "@/lib/store/settings-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CAPABILITIES, type Capability, type ModelInfoSummary, type ProviderSummary } from "@/types";
+import { CAPABILITIES, type Capability, type ProviderSummary } from "@/types";
 import { cn } from "@/lib/utils";
 
 const CAP_LABEL: Record<Capability, string> = {
@@ -134,8 +134,6 @@ function RoleRow({ cap, label, providers, assignment, onAssign }: {
   const isChat = cap === "chat";
   const selectCls = "h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring [&>option]:bg-popover [&>option]:text-popover-foreground";
 
-  const selectedInfo = model ? selectedProvider?.modelInfo?.[model] : undefined;
-
   return (
     <div className="grid grid-cols-[1fr_1fr_1fr] items-center gap-2">
       <span className="text-xs text-foreground">{label}</span>
@@ -150,25 +148,8 @@ function RoleRow({ cap, label, providers, assignment, onAssign }: {
       </select>
       <select className={selectCls} value={model} disabled={!providerId} onChange={(e) => onAssign({ providerId, model: e.target.value })}>
         <option value="">{providerId ? "Select model…" : "—"}</option>
-        {(selectedProvider?.models ?? []).map((m) => <option key={m} value={m}>{formatModelOption(m, selectedProvider?.modelInfo?.[m])}</option>)}
+        {(selectedProvider?.models ?? []).map((m) => <option key={m} value={m}>{m}</option>)}
       </select>
-      {selectedInfo && (
-        <p className="col-start-2 col-end-4 -mt-1 text-[10px] text-muted-foreground">
-          Context {formatTokens(selectedInfo.limit.context)} · Output {formatTokens(selectedInfo.limit.output)}
-        </p>
-      )}
     </div>
   );
 }
-
-function formatModelOption(model: string, info: ModelInfoSummary | undefined): string {
-  if (!info) return model;
-  return `${model} · ${formatTokens(info.limit.context)} ctx`;
-}
-
-function formatTokens(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`;
-  if (value >= 1000) return `${Math.round(value / 1000)}k`;
-  return String(value || "unknown");
-}
-

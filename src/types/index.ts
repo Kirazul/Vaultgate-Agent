@@ -136,12 +136,6 @@ export interface ModelInfoSummary {
     input?: number;
     output: number;
   };
-  cost: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-  };
   capabilities: {
     tools: boolean;
     reasoning: boolean;
@@ -238,24 +232,6 @@ export interface PendingPlan {
   file?: string;
 }
 
-// ── Token usage tracking ────────────────────────────────────
-export interface UsageData {
-  inputTokens: number;
-  outputTokens: number;
-  reasoningTokens?: number;
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-  totalTokens: number;
-  cost?: number;
-  /**
-   * How full the model's context window is RIGHT NOW — the prompt size of the
-   * most recent LLM request (input + cached input). Unlike `totalTokens`, this
-   * is NOT summed across the turn's tool round-trips, so it maps directly onto
-   * the model's context limit for an honest "X% full" reading.
-   */
-  contextTokens?: number;
-}
-
 // ── SSE protocol (server → client) ──────────────────────────
 // A single, explicit event union. The server emits these as
 // `data: <json>\n\n` frames; `[DONE]` terminates the stream.
@@ -268,7 +244,6 @@ export type StreamEvent =
   | { type: "plan"; id: string; title: string; plan: string; file?: string }
   | { type: "terminal"; id?: string; chunk: string }
   | { type: "retry"; attempt: number; maxAttempts: number; delaySeconds: number; message: string }
-  | { type: "usage"; usage: UsageData }
   | { type: "title"; title: string }
   | { type: "mode"; mode: ChatMode }
   | { type: "error"; message: string }
@@ -280,7 +255,6 @@ export interface AgentParams {
   maxIterations?: number;
   subAgentMaxIterations?: number;
   maxContextChars?: number;
-  maxContextTokens?: number;
   providerRetryCount?: number;
   providerRetryDelayMs?: number;
 }

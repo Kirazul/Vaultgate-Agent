@@ -17,7 +17,6 @@ import { BlockBuilder } from "@/lib/ai/blocks";
 import { useChatStore, persistMessage } from "@/lib/store/chat-store";
 import { useSettingsStore } from "@/lib/store/settings-store";
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
-import { useUsageStore } from "@/lib/store/usage-store";
 import { canonicalToolName } from "@/lib/ai/tools/definitions";
 import { firstVisibleLine, sanitizeToolLeakBlocks, sanitizeToolLeakText } from "@/lib/ai/tool-leak-sanitizer";
 import type { ChatRequest, ContentBlock, Message, StreamEvent } from "@/types";
@@ -159,7 +158,6 @@ export function useChatStream() {
     };
     chatStore.addMessage(chatId, assistant);
     chatStore.setStreaming(chatId, true);
-    useUsageStore.getState().resetStreamingTokens();
 
     // 3. Build request from history (assistant placeholder excluded)
       const body: ChatRequest = {
@@ -295,17 +293,6 @@ export function useChatStream() {
                 file: event.file,
               });
               break;
-            case "usage": {
-              const usageStore = useUsageStore.getState();
-              usageStore.setStreamingTokens(event.usage.totalTokens);
-              usageStore.setLatestUsage(event.usage);
-              // Live context-window reading (honest "% full"): the latest
-              // request's footprint, not the accumulated turn total.
-              if (typeof event.usage.contextTokens === "number") {
-                usageStore.setContext(chatId, event.usage.contextTokens);
-              }
-              break;
-            }
             case "mode":
               // The model escalated/switched its own branch — reflect it in the
               // UI (which also plays the transformation overlay).
@@ -368,12 +355,6 @@ export function useChatStream() {
       });
       store.setStreaming(chatId, false);
       abortByChatRef.current.delete(chatId);
-      const usageStore = useUsageStore.getState();
-      if (usageStore.latestUsage) {
-        usageStore.recordUsage(chatId, usageStore.latestUsage);
-      }
-      usageStore.resetStreamingTokens();
-      usageStore.setLatestUsage(null);
       const hasVisibleContent = finalMsg.content.trim() || finalMsg.blocks.some((b) => b.type === "text" ? b.content.trim() : b.type === "tool_calls");
       if (cancelled && !hasVisibleContent) {
         // Cancelled before any visible response — remove both messages

@@ -4,28 +4,6 @@ import path from "node:path";
 import { getDataDir } from "@/lib/config/env";
 import type { ModelInfoSummary } from "@/types";
 
-interface CatalogCostTier {
-  input: number;
-  output: number;
-  cache_read?: number;
-  cache_write?: number;
-  tier: { type: "context"; size: number };
-}
-
-interface CatalogCost {
-  input: number;
-  output: number;
-  cache_read?: number;
-  cache_write?: number;
-  tiers?: CatalogCostTier[];
-  context_over_200k?: {
-    input: number;
-    output: number;
-    cache_read?: number;
-    cache_write?: number;
-  };
-}
-
 interface CatalogModel {
   id: string;
   name: string;
@@ -35,13 +13,12 @@ interface CatalogModel {
   reasoning?: boolean;
   temperature?: boolean;
   tool_call?: boolean;
-  cost?: CatalogCost;
   limit: { context: number; input?: number; output: number };
   modalities?: { input?: string[]; output?: string[] };
   status?: "alpha" | "beta" | "deprecated" | "active";
   provider?: { npm?: string; api?: string };
   experimental?: {
-    modes?: Record<string, { cost?: CatalogCost; provider?: { body?: Record<string, unknown>; headers?: Record<string, string> } }>;
+    modes?: Record<string, { provider?: { body?: Record<string, unknown>; headers?: Record<string, string> } }>;
   };
 }
 
@@ -52,14 +29,6 @@ interface CatalogProvider {
   id: string;
   npm?: string;
   models: Record<string, CatalogModel>;
-}
-
-export interface ModelCost {
-  input: number;
-  output: number;
-  cache: { read: number; write: number };
-  tiers?: Array<{ input: number; output: number; cache: { read: number; write: number }; tier: { type: "context"; size: number } }>;
-  experimentalOver200K?: { input: number; output: number; cache: { read: number; write: number } };
 }
 
 export interface ModelCatalogInfo {
@@ -74,7 +43,6 @@ export interface ModelCatalogInfo {
     input?: number;
     output: number;
   };
-  cost: ModelCost;
   capabilities: {
     tools: boolean;
     reasoning: boolean;
@@ -83,14 +51,6 @@ export interface ModelCatalogInfo {
     input: string[];
     output: string[];
   };
-}
-
-export interface UsageTokens {
-  input: number;
-  output: number;
-  reasoning?: number;
-  cacheRead?: number;
-  cacheWrite?: number;
 }
 
 const SOURCE = process.env.VAULTGATE_MODELS_URL || "https://models.dev";
@@ -130,33 +90,6 @@ export async function modelMetadataForProvider(endpoint: string, models: string[
       .filter((entry): entry is readonly [string, ModelCatalogInfo] => Boolean(entry[1]))
       .map(([model, info]) => [model, publicInfo(info)]),
   );
-}
-
-export function usableContextTokens(info: ModelCatalogInfo | null, requested?: number): number {
-  if (!info?.limit.context) return requested ?? 0;
-  const output = info.limit.output || 0;
-  const reserved = Math.min(20_000, output || 20_000);
-  const usable = info.limit.input ? Math.max(0, info.limit.input - reserved) : Math.max(0, info.limit.context - output);
-  return requested ? Math.min(requested, usable) : usable;
-}
-
-export function estimateContextChars(info: ModelCatalogInfo | null, input: { maxChars?: number; maxTokens?: number }): number {
-  const tokenBudget = usableContextTokens(info, input.maxTokens);
-  if (tokenBudget > 0) return Math.max(32_000, Math.min(input.maxChars ?? Number.MAX_SAFE_INTEGER, tokenBudget * 4));
-  return input.maxChars ?? 180_000;
-}
-
-export function calculateCost(info: ModelCatalogInfo | null, usage: UsageTokens): number | undefined {
-  if (!info) return undefined;
-  const contextTokens = usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
-  const costInfo = selectCost(info.cost, contextTokens);
-  const total =
-    safe(usage.input) * costInfo.input / 1_000_000 +
-    safe(usage.output) * costInfo.output / 1_000_000 +
-    safe(usage.cacheRead) * costInfo.cache.read / 1_000_000 +
-    safe(usage.cacheWrite) * costInfo.cache.write / 1_000_000 +
-    safe(usage.reasoning) * costInfo.output / 1_000_000;
-  return Number.isFinite(total) ? total : undefined;
 }
 
 function catalogPath(): string {
@@ -231,7 +164,6 @@ function toInfo(provider: CatalogProvider, model: CatalogModel): ModelCatalogInf
       input: model.limit.input,
       output: model.limit.output,
     },
-    cost: normalizeCost(model.cost),
     capabilities: {
       tools: model.tool_call ?? true,
       reasoning: model.reasoning ?? false,
@@ -243,34 +175,6 @@ function toInfo(provider: CatalogProvider, model: CatalogModel): ModelCatalogInf
   };
 }
 
-function normalizeCost(cost: CatalogCost | undefined): ModelCost {
-  return {
-    input: cost?.input ?? 0,
-    output: cost?.output ?? 0,
-    cache: {
-      read: cost?.cache_read ?? 0,
-      write: cost?.cache_write ?? 0,
-    },
-    tiers: cost?.tiers?.map((tier) => ({
-      input: tier.input,
-      output: tier.output,
-      cache: {
-        read: tier.cache_read ?? 0,
-        write: tier.cache_write ?? 0,
-      },
-      tier: tier.tier,
-    })),
-    experimentalOver200K: cost?.context_over_200k ? {
-      input: cost.context_over_200k.input,
-      output: cost.context_over_200k.output,
-      cache: {
-        read: cost.context_over_200k.cache_read ?? 0,
-        write: cost.context_over_200k.cache_write ?? 0,
-      },
-    } : undefined,
-  };
-}
-
 function publicInfo(info: ModelCatalogInfo): ModelInfoSummary {
   return {
     id: info.id,
@@ -278,23 +182,8 @@ function publicInfo(info: ModelCatalogInfo): ModelInfoSummary {
     family: info.family,
     status: info.status,
     limit: info.limit,
-    cost: {
-      input: info.cost.input,
-      output: info.cost.output,
-      cacheRead: info.cost.cache.read,
-      cacheWrite: info.cost.cache.write,
-    },
     capabilities: info.capabilities,
   };
-}
-
-function selectCost(cost: ModelCost, contextTokens: number): { input: number; output: number; cache: { read: number; write: number } } {
-  const tier = cost.tiers
-    ?.filter((item) => item.tier.type === "context" && contextTokens > item.tier.size)
-    .sort((a, b) => b.tier.size - a.tier.size)[0];
-  if (tier) return tier;
-  if (cost.experimentalOver200K && contextTokens > 200_000) return cost.experimentalOver200K;
-  return cost;
 }
 
 function normalizeApi(value: string): string {
@@ -312,10 +201,6 @@ function normalizeApi(value: string): string {
 
 function normalizeModelId(value: string): string {
   return value.trim().toLowerCase();
-}
-
-function safe(value: number | undefined): number {
-  return Number.isFinite(value) && value ? value : 0;
 }
 
 function hashFast(value: string): string {

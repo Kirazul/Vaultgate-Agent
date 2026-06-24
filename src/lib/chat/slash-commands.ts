@@ -32,7 +32,7 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: "think", category: "Settings", argumentHint: "on|off|status", description: "Toggle Deep Think for future turns." },
   { name: "permissions", aliases: ["approval"], category: "Settings", argumentHint: "auto-safe|ask|auto-approve|read-only|status", description: "Set or inspect tool approval behavior." },
   { name: "compact", category: "Session", description: "Trigger context compaction for the next agent turn." },
-  { name: "stats", aliases: ["usage"], category: "Info", description: "Show session statistics (messages, tools, files, time)." },
+  { name: "stats", category: "Info", description: "Show session statistics (messages, tools, files, time)." },
   { name: "export", category: "Session", description: "Copy the full conversation as markdown to clipboard." },
   { name: "doctor", category: "Info", description: "Run diagnostics on provider connection, workspace, and settings." },
   { name: "settings", aliases: ["config"], category: "Settings", description: "Open the Settings dialog." },

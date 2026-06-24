@@ -1,58 +1,10 @@
 "use client";
 import { useMemo } from "react";
-import { BarChart3, Clock, Coins, Cpu, FileCode, Hash, MessageSquare, Terminal, Wrench, Zap } from "lucide-react";
+import { BarChart3, Clock, Cpu, FileCode, MessageSquare, Terminal, Wrench, Zap } from "lucide-react";
 import { useChatStore, EMPTY_MESSAGES } from "@/lib/store/chat-store";
-import { useUsageStore } from "@/lib/store/usage-store";
-import { useSettingsStore } from "@/lib/store/settings-store";
 import { normalizeToolName } from "@/lib/ai/tool-display";
 import { cn } from "@/lib/utils";
 import { formatElapsed } from "@/hooks/use-elapsed";
-
-// ── Dependency-free SVG donut ────────────────────────────────
-interface DonutSlice {
-  label: string;
-  value: number;
-  color: string;
-}
-
-function Donut({ slices, size = 132, thickness = 16, centerLabel, centerSub }: { slices: DonutSlice[]; size?: number; thickness?: number; centerLabel: string; centerSub?: string }) {
-  const radius = (size - thickness) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const total = slices.reduce((sum, s) => sum + s.value, 0) || 1;
-  let offset = 0;
-  return (
-    <div className="relative shrink-0" style={{ width: size, height: size }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" className="stroke-border/30" strokeWidth={thickness} />
-        {slices.map((s) => {
-          const fraction = s.value / total;
-          const dash = fraction * circumference;
-          const seg = (
-            <circle
-              key={s.label}
-              cx={size / 2}
-              cy={size / 2}
-              r={radius}
-              fill="none"
-              stroke={s.color}
-              strokeWidth={thickness}
-              strokeDasharray={`${dash} ${circumference - dash}`}
-              strokeDashoffset={-offset}
-              strokeLinecap="butt"
-              className="transition-[stroke-dasharray,stroke-dashoffset] duration-700 ease-out"
-            />
-          );
-          offset += dash;
-          return seg;
-        })}
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-        <span className="text-xl font-bold tabular-nums text-foreground">{centerLabel}</span>
-        {centerSub && <span className="text-[10px] text-muted-foreground">{centerSub}</span>}
-      </div>
-    </div>
-  );
-}
 
 interface SessionStats {
   totalMessages: number;
@@ -149,19 +101,7 @@ function StatCard({ icon: Icon, label, value, sub, accent }: { icon: React.Eleme
 export function StatsTab() {
   const chatId = useChatStore((s) => s.currentChatId);
   const messagesByChat = useChatStore((s) => s.messagesByChat);
-  const usageByChat = useUsageStore((s) => s.byChat);
-  const contextTokens = useUsageStore((s) => (chatId ? s.contextByChat[chatId] ?? 0 : 0));
-  const model = useSettingsStore((s) => s.provider.model);
-  const providers = useSettingsStore((s) => s.providers);
-  const roles = useSettingsStore((s) => s.roles);
   const stats = useMemo(() => computeStats(chatId), [chatId, messagesByChat]);
-  const chatUsage = chatId ? usageByChat[chatId] : undefined;
-
-  const contextLimit = useMemo(() => {
-    const provider = providers.find((p) => p.id === roles.chat?.providerId) ?? providers[0];
-    return provider?.modelInfo?.[model]?.limit.context ?? 0;
-  }, [providers, roles, model]);
-  const contextPct = contextLimit > 0 ? Math.min(100, Math.round((contextTokens / contextLimit) * 100)) : 0;
 
   if (!chatId || stats.totalMessages === 0) {
     return (
@@ -185,57 +125,6 @@ export function StatsTab() {
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Session Statistics</h3>
         <p className="mt-0.5 text-[11px] text-muted-foreground">Live stats for the current conversation.</p>
       </div>
-
-      {/* Context window — the honest "how full is memory right now" reading */}
-      {contextLimit > 0 && (
-        <section className="space-y-2">
-          <h4 className="text-[11px] font-medium text-muted-foreground">Context window</h4>
-          <div className="rounded-lg border border-card-border bg-background px-3 py-3">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-muted-foreground">{fmtTokens(contextTokens)} of {fmtTokens(contextLimit)} tokens in use</span>
-              <span className={cn("font-medium tabular-nums", contextPct > 90 ? "text-red-400" : contextPct > 70 ? "text-amber-400" : "text-foreground")}>{contextPct}% full</span>
-            </div>
-            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-border/40">
-              <div
-                className={cn("h-full rounded-full transition-[width] duration-700 ease-out", contextPct > 90 ? "bg-red-400" : contextPct > 70 ? "bg-amber-400" : "bg-primary")}
-                style={{ width: `${Math.max(2, contextPct)}%` }}
-              />
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* Token usage — donut composition + cost */}
-      {chatUsage && chatUsage.totalTokens > 0 && (
-        <section className="space-y-2">
-          <h4 className="text-[11px] font-medium text-muted-foreground">Token usage</h4>
-          <div className="flex items-center gap-4 rounded-lg border border-card-border bg-background px-3 py-3">
-            <Donut
-              centerLabel={fmtTokens(chatUsage.totalTokens)}
-              centerSub="total"
-              slices={[
-                { label: "Input", value: chatUsage.inputTokens, color: "#6366f1" },
-                { label: "Output", value: chatUsage.outputTokens, color: "#10b981" },
-                { label: "Reasoning", value: chatUsage.reasoningTokens, color: "#ec4899" },
-                { label: "Cache read", value: chatUsage.cacheReadTokens, color: "#f59e0b" },
-                { label: "Cache write", value: chatUsage.cacheWriteTokens, color: "#06b6d4" },
-              ].filter((s) => s.value > 0)}
-            />
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <Legend label="Input" value={chatUsage.inputTokens} color="#6366f1" total={chatUsage.totalTokens} />
-              <Legend label="Output" value={chatUsage.outputTokens} color="#10b981" total={chatUsage.totalTokens} />
-              {chatUsage.reasoningTokens > 0 && <Legend label="Reasoning" value={chatUsage.reasoningTokens} color="#ec4899" total={chatUsage.totalTokens} />}
-              {chatUsage.cacheReadTokens > 0 && <Legend label="Cache read" value={chatUsage.cacheReadTokens} color="#f59e0b" total={chatUsage.totalTokens} />}
-              {chatUsage.cacheWriteTokens > 0 && <Legend label="Cache write" value={chatUsage.cacheWriteTokens} color="#06b6d4" total={chatUsage.totalTokens} />}
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <StatCard icon={Hash} label="Total tokens" value={fmtTokens(chatUsage.totalTokens)} accent="bg-indigo-500/10" />
-            {chatUsage.cost > 0 && <StatCard icon={Coins} label="Spent" value={`$${chatUsage.cost.toFixed(chatUsage.cost < 0.01 ? 4 : 2)}`} accent="bg-emerald-500/10" />}
-            <StatCard icon={Zap} label="LLM turns" value={chatUsage.turns} accent="bg-violet-500/10" />
-          </div>
-        </section>
-      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-2">
@@ -273,22 +162,4 @@ export function StatsTab() {
       )}
     </div>
   );
-}
-
-function Legend({ label, value, color, total }: { label: string; value: number; color: string; total: number }) {
-  const pct = total > 0 ? Math.round((value / total) * 100) : 0;
-  return (
-    <div className="flex items-center gap-2 text-[11px]">
-      <span className="size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: color }} />
-      <span className="min-w-0 flex-1 truncate text-muted-foreground">{label}</span>
-      <span className="tabular-nums text-foreground">{fmtTokens(value)}</span>
-      <span className="w-9 shrink-0 text-right tabular-nums text-muted-foreground/70">{pct}%</span>
-    </div>
-  );
-}
-
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
 }

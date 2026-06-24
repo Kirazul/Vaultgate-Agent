@@ -3,7 +3,6 @@ import { ArrowLeft, Bot, Boxes, ChevronRight, Folder, PanelLeftOpen, Settings } 
 import { useUiStore } from "@/lib/store/ui-store";
 import { ThemeToggle } from "./ThemeToggle";
 import { WindowControls } from "./WindowControls";
-import { ContextUsageIndicator } from "./ContextUsageIndicator";
 import { useChatStore } from "@/lib/store/chat-store";
 
 export function TopBar() {
@@ -67,7 +66,6 @@ export function TopBar() {
       )}
 
       <div className="app-no-drag ml-auto flex items-center gap-0.5">
-        <ContextUsageIndicator />
         <ThemeToggle />
         <button
           onClick={() => setInventoryOpen(true)}

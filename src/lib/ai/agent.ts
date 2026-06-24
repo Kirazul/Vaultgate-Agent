@@ -17,7 +17,6 @@ import { drainTurnSteer } from "./turn-control";
 import { connectAllServers, getAllMcpTools, callMcpTool } from "@/lib/mcp/client";
 import type { McpToolDef } from "@/lib/mcp/types";
 import { consumePermissionResponse, evaluateToolPermission, normalizeApprovalSettings, permissionQuestion } from "./permissions";
-import { calculateCost, estimateContextChars, resolveModelInfo } from "./model-catalog";
 import { isPlanApprovalMessage, extractApprovedPlanPath, planImplementationDirective } from "@/lib/chat/plan";
 
 const DEFAULT_MAX_ITERATIONS = 128;
@@ -102,8 +101,7 @@ export function streamAgent(req: ChatRequest): ReadableStream<Uint8Array> {
         const MAX_ITERS = ap.maxIterations ?? DEFAULT_MAX_ITERATIONS;
         const RETRY_COUNT = ap.providerRetryCount ?? DEFAULT_PROVIDER_RETRY_COUNT;
         const RETRY_DELAY = ap.providerRetryDelayMs ?? DEFAULT_PROVIDER_RETRY_DELAY_MS;
-        const modelInfo = await resolveModelInfo(config.endpoint, model).catch(() => null);
-        const CTX_CHARS = estimateContextChars(modelInfo, { maxChars: ap.maxContextChars, maxTokens: ap.maxContextTokens });
+        const CTX_CHARS = ap.maxContextChars ?? DEFAULT_MAX_CONTEXT_CHARS;
         const permissionResponse = consumePermissionResponse(req.chatId, req.messages.at(-1)?.content ?? "");
         const incomingMessages = req.messages.map((m, index) => {
           const isLast = index === req.messages.length - 1;
@@ -129,35 +127,6 @@ export function streamAgent(req: ChatRequest): ReadableStream<Uint8Array> {
           let answered = false;
           let emptyRetries = 0;
           const MAX_EMPTY_RETRIES = 3;
-          // `cumulativeUsage` sums every round-trip → used for COST only.
-          // `lastTurnUsage` is the single most-recent LLM call → used for the
-          // live CONTEXT-WINDOW reading (matches how Claude Code / opencode show
-          // "% full": the prompt size of the latest request, not the turn sum).
-          let cumulativeUsage: TurnUsage | undefined;
-          let lastTurnUsage: TurnUsage | undefined;
-          const emitUsage = () => {
-            if (!cumulativeUsage) return;
-            const cost = calculateCost(modelInfo, {
-              input: cumulativeUsage.inputTokens,
-              output: cumulativeUsage.outputTokens,
-              reasoning: cumulativeUsage.reasoningTokens,
-              cacheRead: cumulativeUsage.cacheReadTokens,
-              cacheWrite: cumulativeUsage.cacheWriteTokens,
-            });
-            const contextTokens = lastTurnUsage
-              ? lastTurnUsage.inputTokens + lastTurnUsage.cacheReadTokens + lastTurnUsage.cacheWriteTokens + lastTurnUsage.outputTokens
-              : undefined;
-            emit({ type: "usage", usage: {
-              inputTokens: cumulativeUsage.inputTokens,
-              outputTokens: cumulativeUsage.outputTokens,
-              reasoningTokens: cumulativeUsage.reasoningTokens || undefined,
-              cacheReadTokens: cumulativeUsage.cacheReadTokens || undefined,
-              cacheWriteTokens: cumulativeUsage.cacheWriteTokens || undefined,
-              totalTokens: cumulativeUsage.totalTokens,
-              contextTokens,
-              cost,
-            }});
-          };
 
           for (let i = 0; i < MAX_ITERS; i++) {
             if (abortController.signal.aborted) break;
@@ -169,9 +138,6 @@ export function streamAgent(req: ChatRequest): ReadableStream<Uint8Array> {
             const mcpToolDefs = mcpTools.map(mcpToolToOpenAI);
             const allTools = [...staticTools, ...mcpToolDefs];
             const turn = await callLLM(config.endpoint, config.apiKey, model, messages, emit, abortController.signal, "auto", allTools, { temperature: TEMPERATURE, retryCount: RETRY_COUNT, retryDelay: RETRY_DELAY });
-            cumulativeUsage = addUsage(cumulativeUsage, turn.usage);
-            if (turn.usage) lastTurnUsage = turn.usage;
-            emitUsage();
 
             // Empty response recovery — multi-tier fallback:
             // If the model returns nothing (no text, no tools), nudge it.
@@ -289,11 +255,8 @@ export function streamAgent(req: ChatRequest): ReadableStream<Uint8Array> {
                 "You have used a large number of tool steps. If the task is essentially complete, summarize what you accomplished and how to verify it. If critical work remains unfinished, list exactly what's left so the user can continue with a follow-up message.",
             });
             const wrap = await callLLM(config.endpoint, config.apiKey, model, messages, emit, abortController.signal, "none");
-            cumulativeUsage = addUsage(cumulativeUsage, wrap.usage);
-            if (wrap.usage) lastTurnUsage = wrap.usage;
             if (!wrap.streamedAnswer && wrap.content) emit({ type: "delta", text: sanitizeToolLeakText(wrap.content) });
           }
-          emitUsage();
         } catch (err) {
           if (!abortController.signal.aborted) emit({ type: "error", message: err instanceof Error ? err.message : "Agent error" });
         }
@@ -306,20 +269,10 @@ export function streamAgent(req: ChatRequest): ReadableStream<Uint8Array> {
   });
 }
 
-interface TurnUsage {
-  inputTokens: number;
-  outputTokens: number;
-  reasoningTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  totalTokens: number;
-}
-
 interface TurnResult {
   content: string;
   toolCalls: Array<{ id: string; name: string; arguments: string }>;
   streamedAnswer: boolean;
-  usage?: TurnUsage;
 }
 
 // ── Trajectory compaction ─────────────────────────────────────
@@ -469,7 +422,6 @@ async function callLLM(
     messages,
     ...(toolChoice === "none" ? {} : { tools, tool_choice: "auto" }),
     stream: true,
-    stream_options: { include_usage: true },
     temperature,
   });
 
@@ -512,7 +464,6 @@ async function callLLM(
   let content = "";
   let visibleContent = "";
   let streamedAnswer = false;
-  let usage: TurnUsage | undefined;
 
   // Non-streaming provider: parse once.
   if (!ct.includes("text/event-stream") || !res.body) {
@@ -531,8 +482,7 @@ async function callLLM(
       await emitBufferedText(content, emit, signal);
       streamedAnswer = true;
     }
-    usage = parseUsage(json.usage as Record<string, unknown> | undefined);
-    return { content, toolCalls: [...toolAcc.values()].filter((t) => t.name), streamedAnswer, usage };
+    return { content, toolCalls: [...toolAcc.values()].filter((t) => t.name), streamedAnswer };
   }
 
   // Streaming provider: forward deltas live.
@@ -549,13 +499,9 @@ async function callLLM(
     } catch {
       return;
     }
-    // Capture usage from any chunk (providers include it in the final chunk)
-    if (json.usage) usage = parseUsage(json.usage as Record<string, unknown>);
     const choice = (json.choices as Array<Record<string, unknown>>)?.[0];
     if (!choice) return;
     const delta = (choice?.delta as Record<string, unknown>) || {};
-    // Some providers include usage at the choice level
-    if ((choice as Record<string, unknown>).usage) usage = parseUsage((choice as Record<string, unknown>).usage as Record<string, unknown>);
     const reasoning = readReasoning(delta);
     if (reasoning) emit({ type: "reasoning", text: reasoning });
     if (typeof delta.content === "string" && delta.content) {
@@ -608,50 +554,7 @@ async function callLLM(
     .filter((t) => t.name)
     .map((t) => ({ id: t.id || `call_${crypto.randomUUID().slice(0, 8)}`, name: t.name, arguments: t.arguments || "{}" }));
 
-  return { content: sanitizeToolLeakText(content), toolCalls, streamedAnswer, usage };
-}
-
-function parseUsage(raw: Record<string, unknown> | undefined): TurnUsage | undefined {
-  if (!raw) return undefined;
-  const input = safeInt(raw.prompt_tokens) || safeInt(raw.input_tokens) || 0;
-  const output = safeInt(raw.completion_tokens) || safeInt(raw.output_tokens) || 0;
-  const total = safeInt(raw.total_tokens) || input + output;
-  if (total === 0 && input === 0 && output === 0) return undefined;
-
-  // OpenAI-style nested details
-  const promptDetails = (raw.prompt_tokens_details ?? raw.prompt_token_details) as Record<string, unknown> | undefined;
-  const completionDetails = (raw.completion_tokens_details ?? raw.completion_token_details) as Record<string, unknown> | undefined;
-
-  const cacheRead = safeInt(promptDetails?.cached_tokens)
-    || safeInt(raw.cache_read_input_tokens) // Anthropic
-    || safeInt(raw.cache_read_tokens)
-    || 0;
-  const cacheWrite = safeInt(raw.cache_creation_input_tokens) // Anthropic
-    || safeInt(raw.cache_write_tokens)
-    || 0;
-  const reasoning = safeInt(completionDetails?.reasoning_tokens)
-    || safeInt(raw.reasoning_tokens)
-    || 0;
-
-  return { inputTokens: input, outputTokens: output, reasoningTokens: reasoning, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, totalTokens: total };
-}
-
-function safeInt(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? Math.round(v) : 0;
-}
-
-function addUsage(a: TurnUsage | undefined, b: TurnUsage | undefined): TurnUsage | undefined {
-  if (!a && !b) return undefined;
-  const x = a ?? { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0 };
-  const y = b ?? { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0 };
-  return {
-    inputTokens: x.inputTokens + y.inputTokens,
-    outputTokens: x.outputTokens + y.outputTokens,
-    reasoningTokens: x.reasoningTokens + y.reasoningTokens,
-    cacheReadTokens: x.cacheReadTokens + y.cacheReadTokens,
-    cacheWriteTokens: x.cacheWriteTokens + y.cacheWriteTokens,
-    totalTokens: x.totalTokens + y.totalTokens,
-  };
+  return { content: sanitizeToolLeakText(content), toolCalls, streamedAnswer };
 }
 
 function isRetryableProviderResponse(status: number, body: string): boolean {

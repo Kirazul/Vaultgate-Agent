@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Message, ToolCall, ToolResult } from "@/types";
 import { cn } from "@/lib/utils";
-import { useUsageStore } from "@/lib/store/usage-store";
 
 type StatusMode = "requesting" | "thinking" | "responding" | "tool-input" | "tool-use";
 
@@ -30,8 +29,6 @@ const SPINNER_FRAMES = [
 ];
 const COMPLETED_SYMBOL = "⣿";
 const COMPLETED_LINGER_MS = 8000;
-const SHOW_TOKENS_AFTER_MS = 5000;
-const STALL_THRESHOLD_MS = 3000;
 
 export function TurnStatusLine({ message }: { message?: Message }) {
   const streaming = message?.status === "streaming";
@@ -40,10 +37,7 @@ export function TurnStatusLine({ message }: { message?: Message }) {
   const [time, setTime] = useState(0);
   const [completed, setCompleted] = useState<{ durationMs: number } | null>(null);
   const [visible, setVisible] = useState(false);
-  const [displayTokens, setDisplayTokens] = useState(0);
   const startedAtRef = useRef(message?.createdAt ?? Date.now());
-  const lastTokenUpdateRef = useRef(Date.now());
-  const realTokens = useUsageStore((s) => s.streamingTokens);
 
   const mode = useMemo(() => (streaming && message ? detectStatusMode(message) : null), [message, streaming]);
 
@@ -52,35 +46,18 @@ export function TurnStatusLine({ message }: { message?: Message }) {
       startedAtRef.current = message.createdAt;
       setCompleted(null);
       setVisible(true);
-      setDisplayTokens(0);
     }
   }, [streaming, message?.id]);
 
-  // Live timer + smooth token counter during streaming
+  // Live timer during streaming.
   useEffect(() => {
     if (!streaming) return;
     setTime(Date.now() - startedAtRef.current);
     const interval = window.setInterval(() => {
       setTime(Date.now() - startedAtRef.current);
-      // Smooth token counter: approach realTokens gradually
-      setDisplayTokens((prev) => {
-        const target = realTokens;
-        if (prev >= target) return target;
-        const gap = target - prev;
-        let increment: number;
-        if (gap < 70) increment = 3;
-        else if (gap <= 200) increment = Math.max(8, Math.ceil(gap * 0.15));
-        else increment = 50;
-        return Math.min(prev + increment, target);
-      });
     }, SPINNER_FRAME_RATE_MS);
     return () => window.clearInterval(interval);
-  }, [streaming, realTokens]);
-
-  // Track last token update for stall detection
-  useEffect(() => {
-    if (realTokens > 0) lastTokenUpdateRef.current = Date.now();
-  }, [realTokens]);
+  }, [streaming]);
 
   // Transition to completed state
   useEffect(() => {
@@ -109,14 +86,11 @@ export function TurnStatusLine({ message }: { message?: Message }) {
   // ── Streaming state ──
   const elapsed = Math.max(0, Math.round(time / 1000));
   const frame = Math.floor(time / SPINNER_FRAME_RATE_MS) % SPINNER_FRAMES.length;
-  const showTokens = time > SHOW_TOKENS_AFTER_MS && displayTokens > 0;
-  const stalled = realTokens > 0 && Date.now() - lastTokenUpdateRef.current > STALL_THRESHOLD_MS;
-  const spinnerColor = stalled ? "text-red-400" : getModeColor(mode);
+  const spinnerColor = getModeColor(mode);
 
   const infoParts: string[] = [];
   if (mode === "thinking") infoParts.push("thinking");
   if (elapsed > 0) infoParts.push(formatElapsedCompact(elapsed));
-  if (showTokens) infoParts.push(`↓ ${formatTokenCount(displayTokens)} tokens`);
 
   return (
     <div className="mx-auto flex w-full max-w-3xl justify-center px-4 pb-1 font-mono text-[13px] leading-6">
@@ -160,12 +134,6 @@ function formatDuration(ms: number): string {
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
-}
-
-function formatTokenCount(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
-  return String(count);
 }
 
 function detectStatusMode(message: Message): StatusMode {

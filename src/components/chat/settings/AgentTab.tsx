@@ -17,8 +17,7 @@ const PARAMS: ParamDef[] = [
   { key: "temperature", label: "Temperature", description: "Controls randomness. 1.0 = default (creative, better tool decisions). Lower = more deterministic.", min: 0, max: 2, step: 0.1 },
   { key: "maxIterations", label: "Max Iterations", description: "Maximum tool-calling loops per turn. 128 = default. Set to 256 for complex multi-step tasks.", min: 8, max: 512, step: 8 },
   { key: "subAgentMaxIterations", label: "Sub-Agent Max Iterations", description: "Maximum iterations for background sub-agents.", min: 4, max: 256, step: 4 },
-  { key: "maxContextChars", label: "Max Context (chars)", description: "When conversation exceeds this, old tool outputs are summarized to save context. 180k chars ≈ ~45k tokens.", min: 50000, max: 500000, step: 10000 },
-  { key: "maxContextTokens", label: "Max Context (tokens)", description: "Token-aware cap used before provider calls. VaultGate estimates tokens per model and keeps a reserve for new work.", min: 16000, max: 1000000, step: 8000 },
+  { key: "maxContextChars", label: "Max Context (chars)", description: "When conversation exceeds this, old tool outputs are summarized to save context.", min: 50000, max: 500000, step: 10000 },
   { key: "providerRetryCount", label: "Provider Retry Count", description: "How many times to retry on provider errors (rate limits, timeouts, 500s).", min: 1, max: 30, step: 1 },
   { key: "providerRetryDelayMs", label: "Retry Delay (ms)", description: "Base delay between retries. Applies to rate limits and transient errors.", min: 1000, max: 30000, step: 1000 },
 ];
@@ -144,7 +143,7 @@ export function AgentTab() {
       <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
         <p className="text-[10px] font-medium text-muted-foreground">Defaults:</p>
         <div className="mt-1 text-[10px] tabular-nums text-muted-foreground">
-          128 iterations · temperature 1.0 · 180k char context · 120k token cap · 10 retries · Auto Safe permissions
+          128 iterations · temperature 1.0 · 180k char context · 10 retries · Auto Safe permissions
         </div>
       </div>
     </div>

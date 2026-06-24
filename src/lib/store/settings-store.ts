@@ -24,7 +24,6 @@ const DEFAULT_AGENT_PARAMS = {
   maxIterations: 128,
   subAgentMaxIterations: 64,
   maxContextChars: 180000,
-  maxContextTokens: 0,
   providerRetryCount: 10,
   providerRetryDelayMs: 5000,
 };
@@ -86,7 +85,6 @@ interface SettingsState {
     maxIterations: number;
     subAgentMaxIterations: number;
     maxContextChars: number;
-    maxContextTokens: number;
     providerRetryCount: number;
     providerRetryDelayMs: number;
   };

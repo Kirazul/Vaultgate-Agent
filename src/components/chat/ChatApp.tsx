@@ -684,11 +684,7 @@ async function executeSlashCommand({
         }
       }
       const elapsed = durationMs > 60000 ? `${(durationMs / 60000).toFixed(1)}m` : `${(durationMs / 1000).toFixed(1)}s`;
-      const { useUsageStore } = await import("@/lib/store/usage-store");
-      const chatUsage = useUsageStore.getState().getChat(chatId);
-      const tokenLine = chatUsage.totalTokens > 0 ? `\n- Tokens: ${fmtTokensInline(chatUsage.totalTokens)} (${fmtTokensInline(chatUsage.inputTokens)} in, ${fmtTokensInline(chatUsage.outputTokens)} out)` : "";
-      const costLine = chatUsage.cost > 0 ? `\n- Estimated cost: $${chatUsage.cost.toFixed(4)}` : "";
-      appendCommandMessage(chatId, `**Session Stats**\n\n- Messages: ${msgs.length} (${userCount} user, ${assistantCount} assistant)\n- Tool calls: ${toolCalls}\n- Agent time: ${elapsed}${tokenLine}${costLine}\n\nOpen **Settings → Stats** or **Settings → Pricing** for detailed breakdowns.`);
+      appendCommandMessage(chatId, `**Session Stats**\n\n- Messages: ${msgs.length} (${userCount} user, ${assistantCount} assistant)\n- Tool calls: ${toolCalls}\n- Agent time: ${elapsed}\n\nOpen **Settings → Stats** for detailed breakdowns.`);
       return;
     }
 
@@ -1031,12 +1027,6 @@ function makeSubAgentReportMessage(parentChatId: string, status: SubAgentStatus,
     status: status.status === "completed" ? "complete" : "error",
     createdAt: Date.now(),
   };
-}
-
-function fmtTokensInline(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
 }
 
 function subAgentResultText(status: SubAgentStatus): string {

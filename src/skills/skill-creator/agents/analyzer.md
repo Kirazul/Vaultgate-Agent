@@ -243,7 +243,7 @@ Examples:
 - "Eval 3 shows high variance (50% ± 40%) - run 2 had an unusual failure that may be flaky"
 - "Without-skill runs consistently fail on table extraction expectations (0% pass rate)"
 - "Skill adds 13s average execution time but improves pass rate by 50%"
-- "Token usage is 80% higher with skill, primarily due to script output parsing"
+- "Prompt overhead is 80% higher with skill, primarily due to script output parsing"
 - "All 3 without-skill runs for eval 1 produced empty output"
 
 ### Step 6: Write Notes

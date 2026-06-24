@@ -20,8 +20,6 @@ with code, terminal, preview, and agent tools.
 
 ![VaultGate models](vg-models.png)
 
-![VaultGate stats](vg-stats.png)
-
 ## Status
 
 VaultGate is actively developed and already includes the core desktop app,
@@ -112,6 +110,7 @@ lockfiles, and public assets.
 VaultGate is a personal local agent app. Agent tools can run commands and edit
 files inside the selected workspace, so only connect trusted models and review
 tool activity. The app keeps provider secrets local and strips sensitive host
+environment variables from spawned workspace commands.
 
 ## Validation
 
