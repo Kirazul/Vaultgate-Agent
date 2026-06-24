@@ -1,0 +1,998 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import {
+  Bot,
+  Check,
+  ChevronRight,
+  Circle,
+  Code2,
+  ExternalLink,
+  Folder,
+  Loader2,
+  Server,
+  Sparkles,
+  Wand2,
+  AlertTriangle,
+  CheckCircle2,
+} from "lucide-react";
+import type { ContentBlock, Message, ToolCall, ToolResult } from "@/types";
+import {
+  baseName,
+  collectFileDiffs,
+  countExploredItems,
+  diffStats,
+  lineDiff,
+  type DiffRow,
+  extractFilePath,
+  isResearchTool,
+  lifecycleLabel,
+  normalizeToolName,
+  parseTodos,
+  resultPreview,
+  summarizeTool,
+  toolActionLabel,
+  toolDisplaySpec,
+  toolLifecycle,
+  type FileDiffEntry,
+  type Todo,
+  type ToolLifecycle,
+} from "@/lib/ai/tool-display";
+import { parseJsonLoose } from "@/lib/utils";
+import { modeDef, isChatMode } from "@/lib/modes";
+import { useWorkspaceStore } from "@/lib/store/workspace-store";
+import { useChatStore } from "@/lib/store/chat-store";
+import { cn, stripAnsi } from "@/lib/utils";
+import { useElapsed, formatElapsed } from "@/hooks/use-elapsed";
+import { TerminalOutput } from "./TerminalOutput";
+import { HiLine } from "./CodeHighlight";
+import { FileSymbolIcon } from "@/components/icons/FileSymbolIcon";
+
+/**
+ * Live per-tool timer. Counts in real time while the tool is queued or
+ * running (anchored to the client-side `call.startedAt`), then freezes
+ * at the authoritative `result.durationMs` once the result lands.
+ */
+function ToolTimer({ call, result }: { call: ToolCall; result?: ToolResult }) {
+  const lifecycle = toolLifecycle(result);
+  const active = lifecycle === "queued" || lifecycle === "running";
+  const ms = useElapsed(active, call.startedAt, result?.durationMs);
+  if (!active && !result?.durationMs) return null;
+  return <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{formatElapsed(ms)}</span>;
+}
+
+export function ToolCalls({ block, streaming, chatId }: { block: ContentBlock; streaming: boolean; isLast: boolean; chatId: string }) {
+  const calls = block.toolCalls ?? [];
+  const results = block.results ?? [];
+  const resultFor = (id: string) => results.find((r) => r.toolCallId === id);
+  const rows = contiguousToolRows(calls);
+
+  return (
+    <div className="flex flex-col text-sm">
+      {rows.map((row) => row.kind === "research" ? (
+        <ExploredGroup key={row.calls.map((call) => call.id).join(":")} calls={row.calls} results={results} active={streaming} />
+      ) : (
+        <ToolRow key={row.call.id} call={row.call} result={resultFor(row.call.id)} streaming={streaming} chatId={chatId} />
+      ))}
+    </div>
+  );
+}
+
+function contiguousToolRows(calls: ToolCall[]): Array<{ kind: "research"; calls: ToolCall[] } | { kind: "tool"; call: ToolCall }> {
+  const rows: Array<{ kind: "research"; calls: ToolCall[] } | { kind: "tool"; call: ToolCall }> = [];
+  let research: ToolCall[] = [];
+  const flushResearch = () => {
+    if (research.length) rows.push({ kind: "research", calls: research });
+    research = [];
+  };
+  for (const call of calls) {
+    if (isResearchTool(call.name)) research.push(call);
+    else {
+      flushResearch();
+      rows.push({ kind: "tool", call });
+    }
+  }
+  flushResearch();
+  return rows;
+}
+
+/**
+ * Extracts all file diffs from a message's content blocks.
+ * Used by MessageBubble to show the file-change summary.
+ */
+export function getMessageFileDiffs(blocks: ContentBlock[]): FileDiffEntry[] {
+  const allCalls: ToolCall[] = [];
+  for (const block of blocks) {
+    if (block.type === "tool_calls" && block.toolCalls) {
+      allCalls.push(...block.toolCalls);
+    }
+  }
+  return collectFileDiffs(allCalls);
+}
+
+/**
+ * The Antigravity "N files changed +X -Y · Review" bar shown at the bottom
+ * of an assistant message.
+ */
+export function FileChangeSummary({ diffs, chatId }: { diffs: FileDiffEntry[]; chatId: string }) {
+  if (diffs.length === 0) return null;
+
+  const totalAdded = diffs.reduce((sum, d) => sum + d.stats.added, 0);
+  const totalRemoved = diffs.reduce((sum, d) => sum + d.stats.removed, 0);
+
+  const openReview = () => {
+    useWorkspaceStore.getState().setReviewDiffs(diffs);
+    useWorkspaceStore.getState().activate(chatId, "review");
+  };
+
+  return (
+    <div className="my-1 flex w-full select-none flex-col">
+      <div
+        onClick={openReview}
+        className="files-changed-header flex cursor-pointer flex-wrap items-center justify-between gap-1 rounded-xl border p-2 pl-3 text-sm transition-colors duration-200 hover:bg-muted active:bg-secondary/80"
+      >
+        <div className="flex items-center gap-1.5 overflow-hidden">
+          <span className="truncate text-secondary-foreground">
+            {diffs.length} file{diffs.length === 1 ? "" : "s"} changed
+          </span>
+          <div className="flex items-center gap-0.5 text-sm tabular-nums">
+            <span className="text-green-500">+{totalAdded}</span>
+            {totalRemoved > 0 && <span className="text-red-500">-{totalRemoved}</span>}
+          </div>
+          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+        </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            openReview();
+          }}
+          className="review-button flex shrink-0 cursor-pointer select-none items-center gap-1 rounded-md border bg-muted px-1.5 py-0.5 text-sm text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        >
+          <ReviewIcon className="size-3.5 opacity-70" />
+          <span>Review</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ReviewIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 -960 960 960" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M510-530h60v-80h80v-60H570v-80H510v80H430v60h80v80ZM430-370H650v-60H430v60ZM332.31-220Q302-220 281-241t-21-51.31V-827.69Q260-858 281-879t51.31-21H610L820-690v397.69Q820-262 799-241t-51.31,21H332.31Zm0-60H747.69q4.62,0 8.46-3.85t3.85-8.46V-660L580-840H332.31q-4.62,0-8.46,3.85T320-827.69v535.38q0,4.62 3.85,8.46t8.46,3.85Zm-160,220Q142-60 121-81t-21-51.31V-660h60v527.69q0,4.62 3.85,8.46t8.46,3.85H580v60H172.31ZM320-280q0,0 0-3.85t0-8.46V-827.69q0-4.62 0-8.46t0-3.85v180v367.69q0,4.62 0,8.46t0,3.85Z" />
+    </svg>
+  );
+}
+
+function ToolRow({ call, result, streaming, chatId }: { call: ToolCall; result?: ToolResult; streaming: boolean; chatId: string }) {
+  const name = normalizeToolName(call.name);
+  if (name === "switchmode") return <SwitchModeRow call={call} />;
+  if (name === "todowrite") return <TodoRow call={call} />;
+  if (name === "bash") return <TerminalRow call={call} result={result} />;
+  if (["write", "edit", "multiedit"].includes(name)) return <EditRow call={call} result={result} streaming={streaming} chatId={chatId} />;
+  if (name === "task") return <AgentRow call={call} result={result} parentChatId={chatId} />;
+  if (name === "skill") return <SkillRow call={call} result={result} streaming={streaming} />;
+  return <GenericRow call={call} result={result} streaming={streaming} />;
+}
+
+/** Antigravity file-name chip: Symbols file icon + basename, lightens on hover. */
+function FileChip({ path, onClick }: { path: string; onClick?: () => void }) {
+  return (
+    <span className="context-scope-mention min-w-0">
+      <button
+        type="button"
+        draggable="true"
+        onClick={(event) => {
+          if (!onClick) return;
+          event.stopPropagation();
+          onClick();
+        }}
+        className="appearance-none bg-transparent border-0 p-0 inline-flex min-w-0 max-w-full items-center gap-0.5 rounded-md align-middle text-sm font-medium transition-[opacity,background-color] cursor-pointer hover:bg-secondary select-none translate-y-[-1.5px]"
+        style={{ padding: "1px 0.25rem 1px 0.125rem" }}
+      >
+        <FileSymbolIcon path={path} />
+        <span className="inline-flex min-w-0 items-center gap-1 truncate leading-tight select-text">{baseName(path)}</span>
+      </button>
+    </span>
+  );
+}
+
+function FolderChip({ path }: { path: string }) {
+  return (
+    <span className="context-scope-mention min-w-0">
+      <span
+        className="appearance-none bg-transparent border-0 p-0 inline-flex max-w-full items-center gap-0.5 rounded-md align-middle text-sm font-medium transition-[opacity,background-color] select-none translate-y-[-1.5px]"
+        style={{ padding: "1px 0.25rem 1px 0.125rem" }}
+      >
+        <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="inline-flex min-w-0 items-center gap-1 truncate leading-tight select-text">{path}</span>
+      </span>
+    </span>
+  );
+}
+
+function StatPair({ stats, showZero = false }: { stats: { added: number; removed: number } | null; showZero?: boolean }) {
+  if (!stats) return null;
+  if (!showZero && stats.added === 0 && stats.removed === 0) return null;
+  return (
+    <span className="ml-px flex flex-row gap-1 whitespace-nowrap rounded-md px-1 py-0.5 text-xs tabular-nums">
+      <span className="text-green-500">+{stats.added}</span>
+      {(showZero || stats.removed > 0) && <span className="text-red-500">-{stats.removed}</span>}
+    </span>
+  );
+}
+
+/**
+ * The Antigravity compact tool row: a single 32px line that reads
+ * "{verb} {detail}", with an optional inline spinner while running, an
+ * optional trailing control, and an optional chevron that reveals `body`.
+ */
+function CompactRow({
+  verb,
+  error,
+  running,
+  finished,
+  timer,
+  trailing,
+  expandable,
+  open,
+  onToggle,
+  onClick,
+  children,
+  body,
+}: {
+  verb: React.ReactNode;
+  error?: boolean;
+  running?: boolean;
+  finished?: boolean;
+  timer?: React.ReactNode;
+  trailing?: React.ReactNode;
+  expandable?: boolean;
+  open?: boolean;
+  onToggle?: () => void;
+  onClick?: () => void;
+  children?: React.ReactNode;
+  body?: React.ReactNode;
+}) {
+  const clickable = Boolean(onClick) || (expandable && Boolean(onToggle));
+  const [flash, setFlash] = useState<"success" | "error" | null>(null);
+  const prevFinished = useRef(false);
+
+  useEffect(() => {
+    if (finished && !prevFinished.current) {
+      setFlash(error ? "error" : "success");
+      const t = setTimeout(() => setFlash(null), 1800);
+      return () => clearTimeout(t);
+    }
+    prevFinished.current = Boolean(finished);
+  }, [finished, error]);
+
+  return (
+    <div className="flex flex-col pt-px pb-0.5 gap-1 w-full">
+      <div
+        onClick={onClick ?? (expandable ? onToggle : undefined)}
+        className={cn(
+            "border p-2 rounded-xl flex flex-col gap-1 items-start select-none artifact-card group w-full min-w-0 overflow-hidden",
+          "transition-[border-color,box-shadow] duration-500 ease-out",
+          clickable && "cursor-pointer hover:bg-muted/50",
+          flash === "success" && "border-emerald-500/50 shadow-[0_0_12px_-2px_rgba(16,185,129,0.25)]",
+          flash === "error" && "border-red-500/50 shadow-[0_0_12px_-2px_rgba(239,68,68,0.25)]",
+          !flash && finished && !error && "border-emerald-500/20",
+          !flash && finished && error && "border-red-500/20",
+        )}
+      >
+        <div className="flex w-full items-center justify-between min-w-0">
+          <span className="appearance-none bg-transparent border-0 p-0 inline-flex min-w-0 flex-1 items-center gap-1 rounded-md align-middle text-sm font-medium transition-[opacity,background-color] select-none -translate-x-px pointer-events-none" style={{ padding: "1px 0.25rem 1px 0.125rem" }}>
+            {finished && !running ? (
+              error ? (
+                <span className="inline-flex shrink-0 items-center text-red-400"><AlertTriangle className="size-3.5" /></span>
+              ) : (
+                <span className="inline-flex shrink-0 items-center text-emerald-500"><CheckCircle2 className="size-3.5" /></span>
+              )
+            ) : (
+              <span className={cn("inline-flex items-center shrink-0", error ? "text-destructive" : "text-secondary-foreground")}>{verb}</span>
+            )}
+            <span className="inline-flex min-w-0 items-center gap-1 break-words leading-tight select-text">
+              {children}
+            </span>
+          </span>
+
+          <div className="flex shrink-0 items-center gap-2">
+            {running && <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />}
+            {timer}
+            {trailing}
+            {expandable && (
+              <ChevronRight className={cn("ml-1 size-3.5 shrink-0 text-muted-foreground transition-all duration-200 group-hover:text-secondary-foreground", open && "rotate-90 text-secondary-foreground")} />
+            )}
+          </div>
+        </div>
+
+        {expandable && open && body && (
+          <div className="mt-1 w-full min-w-0 overflow-hidden">
+            <div className="w-full min-w-0 animate-fade-in">{body}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ExploredGroup({ calls, results, active }: { calls: ToolCall[]; results: ToolResult[]; active: boolean }) {
+  const [open, setOpen] = useState(false);
+  const { files, folders } = countExploredItems(calls);
+  const webOnly = calls.every((call) => ["webfetch", "websearch"].includes(normalizeToolName(call.name)));
+  const failed = calls.some((call) => toolLifecycle(results.find((r) => r.toolCallId === call.id)) === "error");
+  const running = active && calls.some((call) => ["queued", "running"].includes(toolLifecycle(results.find((r) => r.toolCallId === call.id))));
+
+  useEffect(() => {
+    if (failed) setOpen(true);
+  }, [failed]);
+
+  const parts: string[] = [];
+  if (files > 0) parts.push(`${files} file${files === 1 ? "" : "s"}`);
+  if (folders > 0) parts.push(`${folders} folder${folders === 1 ? "" : "s"}`);
+  const folderCalls = calls.filter((call) => normalizeToolName(call.name) === "ls");
+  const singleFolderPath = folderCalls.length === 1 ? extractFilePath(folderCalls[0].arguments) || summarizeTool(folderCalls[0].name, folderCalls[0].arguments) : "";
+  const verbLabel = webOnly ? (running ? "Searching" : "Searched") : (running ? "Exploring" : "Explored");
+  const itemLabel = webOnly ? "the web" : singleFolderPath ? `folder ${singleFolderPath}` : parts.length > 0 ? parts.join(", ") : `${calls.length} item${calls.length === 1 ? "" : "s"}`;
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((value) => !value)}
+        title="VaultGate read files and web pages to understand your request. Click to see what it looked at."
+        className="group flex min-h-8 w-full select-none items-center gap-1 rounded-lg px-2 py-1 text-left text-sm tabular-nums text-foreground transition-colors hover:bg-muted"
+      >
+        <span className={cn(failed ? "text-destructive" : "text-secondary-foreground")}>{verbLabel}</span>
+        <span className="truncate">{itemLabel}</span>
+        {running && <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />}
+        {failed && <AlertTriangle className="size-3.5 shrink-0 text-destructive" />}
+        <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-all duration-200 group-hover:text-secondary-foreground", open && "rotate-90 text-secondary-foreground")} />
+      </button>
+      {open && (
+        <div className="overflow-hidden pl-3">
+          <div className="flex animate-fade-in flex-col gap-0.5 py-1">
+            {calls.map((call) => {
+              const result = results.find((r) => r.toolCallId === call.id);
+              const fp = extractFilePath(call.arguments);
+              const lifecycle = toolLifecycle(result);
+              const lines = result?.content.match(/\d+:/g)?.length;
+              const preview = recallResultPreview(call, result) || (result?.status === "error" ? resultPreview(result.content, 180) : "");
+              return (
+                <div key={call.id} className="flex flex-col gap-0.5">
+                  <div className="flex min-h-7 items-center gap-1.5 px-2 text-sm text-secondary-foreground">
+                    {lifecycle === "error" ? (
+                      <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
+                    ) : lifecycle === "running" || lifecycle === "queued" ? (
+                      <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />
+                    ) : (
+                      <Check className="size-3.5 shrink-0 text-green-500/70" />
+                    )}
+                    <span className="shrink-0">{lifecycleLabel(toolDisplaySpec(call.name), lifecycle)}</span>
+                    {normalizeToolName(call.name) === "ls" && fp ? <FolderChip path={fp} /> : fp ? <FileChip path={fp} /> : <span className="truncate text-foreground/90">{summarizeTool(call.name, call.arguments)}</span>}
+                    {lines ? <span className="text-muted-foreground">#L1-{lines}</span> : null}
+                  </div>
+                  {preview && <div className={cn("px-2 pl-7 text-xs", lifecycle === "error" ? "text-destructive" : "text-muted-foreground")}>{preview}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function recallResultPreview(call: ToolCall, result?: ToolResult): string {
+  if (normalizeToolName(call.name) !== "recallsessions" || result?.status !== "completed") return "";
+  const firstLine = result.content.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
+  if (!firstLine) return "";
+  return resultPreview(firstLine, 220);
+}
+
+function findStringField(args: string, keys: string[]): string {
+  const parsed = parseJsonLoose(args) || {};
+  for (const key of keys) {
+    const value = parsed[key];
+    if (typeof value === "string" && value) return value;
+  }
+  for (const key of keys) {
+    const value = extractPartialJsonString(args, key);
+    if (value) return value;
+  }
+  return "";
+}
+
+function findStringFields(args: string, key: string): string[] {
+  const parsed = parseJsonLoose(args) || {};
+  const values: string[] = [];
+
+  const collect = (value: unknown) => {
+    if (typeof value === "string") values.push(value);
+    else if (Array.isArray(value)) value.forEach(collect);
+    else if (value && typeof value === "object") collect((value as Record<string, unknown>)[key]);
+  };
+
+  collect(parsed[key]);
+  if (Array.isArray(parsed.edits)) {
+    for (const edit of parsed.edits) collect((edit as Record<string, unknown>)?.[key]);
+  }
+  if (values.length > 0) return values;
+  return extractPartialJsonStrings(args, key);
+}
+
+function extractPartialJsonStrings(source: string, key: string): string[] {
+  const values: string[] = [];
+  const needle = `"${key}"`;
+  let searchAt = 0;
+  while (searchAt < source.length) {
+    const keyAt = source.indexOf(needle, searchAt);
+    if (keyAt === -1) break;
+    const colonAt = source.indexOf(":", keyAt + needle.length);
+    if (colonAt === -1) break;
+    const quoteAt = source.indexOf('"', colonAt + 1);
+    if (quoteAt === -1) break;
+
+    let escaped = false;
+    let end = quoteAt + 1;
+    while (end < source.length) {
+      const char = source[end];
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') break;
+      end++;
+    }
+    const raw = source.slice(quoteAt + 1, end);
+    values.push(decodePartialJsonString(raw));
+    searchAt = Math.max(end + 1, quoteAt + 1);
+  }
+  return values.filter(Boolean);
+}
+
+function extractPartialJsonString(source: string, key: string): string {
+  return extractPartialJsonStrings(source, key)[0] ?? "";
+}
+
+function decodePartialJsonString(raw: string): string {
+  let safe = raw;
+  if (safe.endsWith("\\")) safe = safe.slice(0, -1);
+  try {
+    return JSON.parse(`"${safe.replace(/\r?\n/g, "\\n")}"`) as string;
+  } catch {
+    return safe
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "\r")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\");
+  }
+}
+
+function countLines(value: string): number {
+  return value ? value.replace(/\r/g, "").split("\n").length : 0;
+}
+
+function liveFilePath(args: string): string {
+  return findStringField(args, ["filepath", "file_path", "path", "relativePath"]);
+}
+
+function writtenContent(name: string, args: string): string {
+  const n = normalizeToolName(name);
+  const a = parseJsonLoose(args) || {};
+  if (n === "write") return String(a.content ?? findStringField(args, ["content"]));
+  if (n === "edit") return String(a.new_str ?? findStringField(args, ["new_str"]));
+  if (n === "multiedit") {
+    const edits = Array.isArray(a.edits) ? (a.edits as Array<Record<string, unknown>>) : [];
+    const parsed = edits.map((e) => String(e?.new_str ?? "")).filter(Boolean);
+    return (parsed.length ? parsed : findStringFields(args, "new_str")).join("\n");
+  }
+  return "";
+}
+
+function liveDiffStats(name: string, args: string): { added: number; removed: number } {
+  const n = normalizeToolName(name);
+  if (n === "write") return { added: countLines(writtenContent(name, args)), removed: 0 };
+  if (n === "edit") {
+    return {
+      added: countLines(writtenContent(name, args)),
+      removed: countLines(findStringField(args, ["old_str"])),
+    };
+  }
+  if (n === "multiedit") {
+    return {
+      added: findStringFields(args, "new_str").reduce((sum, value) => sum + countLines(value), 0),
+      removed: findStringFields(args, "old_str").reduce((sum, value) => sum + countLines(value), 0),
+    };
+  }
+  return { added: 0, removed: 0 };
+}
+
+function EditRow({ call, result, streaming, chatId }: { call: ToolCall; result?: ToolResult; streaming: boolean; chatId: string }) {
+  const fp = extractFilePath(call.arguments) || liveFilePath(call.arguments);
+  const liveStats = liveDiffStats(call.name, call.arguments);
+  const stats = diffStats(call.name, call.arguments) ?? liveStats;
+  const lifecycle = toolLifecycle(result);
+  const label = lifecycleLabel(toolDisplaySpec(call.name), lifecycle);
+
+  // Start in writing mode only for active streams — initialised from the prop
+  // so even if the result arrives in the same React batch as the tool call,
+  // the "Creating/Editing" card is shown first.
+  const [showWriting, setShowWriting] = useState(() => streaming);
+
+  useEffect(() => {
+    if (!showWriting) return;
+    // Result arrived → hold the line counter visible for 500 ms so the user can
+    // read the final count, then transition to the completed card.
+    if (lifecycle === "completed" || lifecycle === "error") {
+      const t = setTimeout(() => setShowWriting(false), 500);
+      return () => clearTimeout(t);
+    }
+  }, [lifecycle, showWriting]);
+
+  useEffect(() => {
+    // Stream ended without a result (message cancelled mid-write) → hide immediately.
+    if (!streaming && showWriting && !result) setShowWriting(false);
+  }, [streaming, showWriting, result]);
+
+  const writing = showWriting;
+
+  const openFile = () => {
+    if (!fp) return;
+    useWorkspaceStore.getState().activate(chatId, "code");
+    const detail = fp.replace(/^\/+/, "");
+    const emit = () => {
+      window.dispatchEvent(new CustomEvent("vaultgate:open-workspace-path", { detail }));
+      window.dispatchEvent(new CustomEvent("vaultgate:open-file", { detail }));
+    };
+    emit();
+    window.setTimeout(emit, 50);
+  };
+
+  return <EditedRow call={call} result={result} fp={fp} label={label} stats={stats} liveStats={liveStats} lifecycle={lifecycle} openFile={openFile} writing={writing} toolName={normalizeToolName(call.name)} />;
+}
+
+function EditedRow({
+  call,
+  result,
+  fp,
+  label,
+  stats,
+  liveStats,
+  lifecycle,
+  openFile,
+  writing,
+  toolName,
+}: {
+  call: ToolCall;
+  result?: ToolResult;
+  fp: string;
+  label: string;
+  stats: { added: number; removed: number } | null;
+  liveStats: { added: number; removed: number };
+  lifecycle: ToolLifecycle;
+  openFile: () => void;
+  writing: boolean;
+  toolName: string;
+}) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (lifecycle === "error") setOpen(true);
+  }, [lifecycle]);
+
+  const isError = lifecycle === "error";
+  const body = isError && result?.content ? <ResultPanel content={result.content} /> : <DiffView call={call} />;
+  const writingVerb = toolName === "write" ? "Creating" : "Editing";
+  const liveLines = liveStats.added;
+
+  return (
+    <CompactRow
+      verb={writing ? writingVerb : label}
+      error={isError}
+      running={writing}
+      finished={!writing && (lifecycle === "completed" || lifecycle === "error")}
+      timer={<ToolTimer call={call} result={result} />}
+      expandable={!writing}
+      open={!writing && open}
+      onToggle={() => setOpen((v) => !v)}
+      trailing={
+        fp ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              openFile();
+            }}
+            title={`Open ${baseName(fp)} in the Code panel`}
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          >
+            <Code2 className="size-3.5" />
+          </button>
+        ) : undefined
+      }
+      body={body}
+    >
+      {fp ? <FileChip path={fp} onClick={openFile} /> : <span className="truncate text-foreground/90">file</span>}
+      {writing && liveLines > 0 ? (
+        <span className="shrink-0 tabular-nums font-mono text-xs text-green-500/80">+{liveLines}</span>
+      ) : (
+        <StatPair stats={writing ? null : stats} showZero={!writing} />
+      )}
+    </CompactRow>
+  );
+}
+
+function DiffView({ call }: { call: ToolCall }) {
+  const name = normalizeToolName(call.name);
+  const a = parseJsonLoose(call.arguments) || {};
+  const hunks: { old: string; next: string }[] = [];
+  if (name === "write") hunks.push({ old: "", next: String(a.content ?? "") });
+  else if (name === "edit") hunks.push({ old: String(a.old_str ?? ""), next: String(a.new_str ?? "") });
+  else if (name === "multiedit") {
+    for (const e of Array.isArray(a.edits) ? (a.edits as Array<Record<string, unknown>>) : []) hunks.push({ old: String(e?.old_str ?? ""), next: String(e?.new_str ?? "") });
+  }
+  if (hunks.length === 0 || hunks.every((h) => !h.old && !h.next)) return null;
+
+  return (
+    <div className="mt-0.5 min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-sm">
+      <div className="border-b border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground">{name === "write" ? "new file" : `${hunks.length} change${hunks.length > 1 ? "s" : ""}`}</div>
+      <div className="max-h-80 min-w-0 overflow-auto py-1 font-mono text-[11.5px] leading-relaxed text-foreground/90">
+        {hunks.map((h, hi) => (
+          <div key={hi} className={hi > 0 ? "mt-1 border-t border-border/40 pt-1" : ""}>
+            <DiffHunk rows={collapseContext(lineDiff(h.old, h.next))} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** A single hunk rendered as real diff rows: context lines neutral, only changed
+ * lines tinted. Long unmodified runs are elided to keep the card focused. */
+function DiffHunk({ rows }: { rows: Array<DiffRow | { type: "gap"; count: number }> }) {
+  return (
+    <>
+      {rows.map((row, i) => {
+        if (row.type === "gap") {
+          return (
+            <div key={`g${i}`} className="select-none px-2 py-0.5 text-[10.5px] text-muted-foreground/60">
+              ⋯ {row.count} unchanged line{row.count === 1 ? "" : "s"}
+            </div>
+          );
+        }
+        const sign = row.type === "add" ? "+" : row.type === "remove" ? "-" : " ";
+        return (
+          <div
+            key={`r${i}`}
+            className={cn(
+              "flex whitespace-pre-wrap break-words px-2",
+              row.type === "add" && "diff-line-added",
+              row.type === "remove" && "diff-line-removed",
+            )}
+          >
+            <span
+              className={cn(
+                "diff-gutter mr-2 select-none",
+                row.type === "add" ? "text-emerald-400/60" : row.type === "remove" ? "text-red-400/60" : "text-muted-foreground/40",
+              )}
+            >
+              {sign}
+            </span>
+            <span className="min-w-0">{row.text ? <HiLine code={row.text} /> : " "}</span>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/** Collapse runs of >6 unchanged context lines into a single elision marker,
+ * keeping 3 lines of context on each side of every change. */
+function collapseContext(rows: DiffRow[], pad = 3): Array<DiffRow | { type: "gap"; count: number }> {
+  const keep = new Array<boolean>(rows.length).fill(false);
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].type === "context") continue;
+    for (let j = Math.max(0, i - pad); j <= Math.min(rows.length - 1, i + pad); j++) keep[j] = true;
+  }
+  const out: Array<DiffRow | { type: "gap"; count: number }> = [];
+  let hidden = 0;
+  for (let i = 0; i < rows.length; i++) {
+    if (keep[i]) {
+      if (hidden > 0) {
+        out.push({ type: "gap", count: hidden });
+        hidden = 0;
+      }
+      out.push(rows[i]);
+    } else {
+      hidden++;
+    }
+  }
+  if (hidden > 0) out.push({ type: "gap", count: hidden });
+  return out;
+}
+
+function TerminalRow({ call, result }: { call: ToolCall; result?: ToolResult }) {
+  const [open, setOpen] = useState(false);
+  const args = parseJsonLoose(call.arguments) || {};
+  const command = String(args.command || summarizeTool(call.name, call.arguments));
+  const lifecycle = toolLifecycle(result);
+  const failed = lifecycle === "error";
+  const label = lifecycleLabel(toolDisplaySpec(call.name), lifecycle);
+
+  useEffect(() => {
+    if (failed) setOpen(true);
+  }, [failed]);
+
+  return (
+    <CompactRow
+      verb={label}
+      error={failed}
+      running={lifecycle === "queued" || lifecycle === "running"}
+      finished={lifecycle === "completed" || lifecycle === "error"}
+      timer={<ToolTimer call={call} result={result} />}
+      expandable
+      open={open}
+      onToggle={() => setOpen((value) => !value)}
+      body={result?.content ? <CommandOutput command={command} content={result.content} /> : undefined}
+    >
+      <span className="inline-flex min-w-0 max-w-full">
+        <span className="truncate font-mono text-[13px]">{command}</span>
+      </span>
+    </CompactRow>
+  );
+}
+
+function CommandOutput({ command, content }: { command: string; content: string }) {
+  const appServer = extractAppServerInfo(content);
+  return (
+    <div className="mt-0.5 flex min-w-0 flex-col gap-2">
+      {appServer && <AppServerCard info={appServer} />}
+      <div className="mt-0.5 flex min-w-0 max-w-full flex-col overflow-hidden rounded-lg border border-border bg-background shadow-sm">
+        <div className="flex min-w-0 grow items-start justify-between px-2 py-1">
+          <pre className="max-h-[120px] min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-all font-mono text-sm">
+            <span className="text-muted-foreground">…/workspace</span>
+            <span className="text-muted-foreground"> &gt; </span>
+            {command}
+          </pre>
+        </div>
+        <div className="border-t border-border pt-1">
+          <div className="max-h-[260px] min-w-0 overflow-auto px-2 py-1">
+            <TerminalOutput chunks={[stripAnsi(content)]} compact />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface AppServerInfo {
+  url: string;
+  project?: string;
+  log?: string;
+  status?: string;
+}
+
+function firstLineValue(content: string, label: string): string | undefined {
+  const match = new RegExp(`^${label}:\\s*(.+)$`, "im").exec(content);
+  return match?.[1]?.trim() || undefined;
+}
+
+function extractAppServerInfo(content: string): AppServerInfo | null {
+  const clean = stripAnsi(content);
+  const match = /^App:\s*(https?:\/\/(?:127\.0\.0\.1|localhost):\d+[^\s]*)/im.exec(clean);
+  if (!match) return null;
+  return {
+    url: match[1],
+    project: firstLineValue(clean, "Project"),
+    log: firstLineValue(clean, "Log"),
+    status: firstLineValue(clean, "Status"),
+  };
+}
+
+function AppServerCard({ info }: { info: AppServerInfo }) {
+  const open = () => window.open(info.url, "_blank", "noopener,noreferrer");
+  return (
+    <div className="rounded-xl border border-primary/20 bg-primary/5 p-2 shadow-sm">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-2">
+          <span className="mt-0.5 rounded-md bg-primary/10 p-1 text-primary">
+            <Server className="size-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-foreground">App server</div>
+            <a className="block truncate font-mono text-xs text-primary hover:underline" href={info.url} target="_blank" rel="noreferrer">
+              {info.url}
+            </a>
+          </div>
+        </div>
+        <button type="button" onClick={open} className="inline-flex shrink-0 items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted">
+          Open
+          <ExternalLink className="size-3" />
+        </button>
+      </div>
+      {(info.project || info.status || info.log) && (
+        <div className="mt-2 grid gap-0.5 pl-8 text-xs text-muted-foreground">
+          {info.status && <div className="truncate">{info.status}</div>}
+          {info.project && <div className="truncate">Project: {info.project}</div>}
+          {info.log && <div className="truncate">Log: {info.log}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SkillRow({ call, result, streaming }: { call: ToolCall; result?: ToolResult; streaming: boolean }) {
+  const lifecycle = toolLifecycle(result);
+  const [open, setOpen] = useState(false);
+  const args = parseJsonLoose(call.arguments) || {};
+  const skillName = String(args.command || summarizeTool(call.name, call.arguments));
+
+  useEffect(() => {
+    if (lifecycle === "error") setOpen(true);
+    if (normalizeToolName(call.name) === "bashoutput" && result?.content) setOpen(true);
+  }, [call.name, lifecycle, result?.content]);
+
+  return (
+    <CompactRow
+      verb={lifecycleLabel(toolDisplaySpec(call.name), lifecycle)}
+      error={lifecycle === "error"}
+      running={streaming && lifecycle !== "completed" && lifecycle !== "error"}
+      timer={<ToolTimer call={call} result={result} />}
+      expandable
+      open={open}
+      onToggle={() => setOpen((value) => !value)}
+      body={result?.content ? <ResultPanel content={result.content} /> : undefined}
+    >
+      {lifecycle !== "error" && <Wand2 className={cn("size-3.5 shrink-0", lifecycle === "completed" ? "text-fuchsia-400" : "text-fuchsia-400/70")} />}
+      <span className="truncate font-medium text-foreground/90">{skillName}</span>
+    </CompactRow>
+  );
+}
+
+function AgentRow({ call, result, parentChatId }: { call: ToolCall; result?: ToolResult; parentChatId: string }) {
+  const lifecycle = toolLifecycle(result);
+  const args = parseJsonLoose(call.arguments) || {};
+  const type = String(args.subagent_type || "general");
+  const description = String(args.description || summarizeTool(call.name, call.arguments));
+  const selectChat = useChatStore((s) => s.selectChat);
+  const upsertChat = useChatStore((s) => s.upsertChat);
+  const parentModel = useChatStore((s) => s.chats.find((chat) => chat.id === parentChatId)?.model ?? "");
+  const parentReport = useChatStore((s) => (s.messagesByChat[parentChatId] ?? []).find((message) => message.id === `${call.id}-parent-report`));
+  const backgroundStarted = result?.content.includes("Started sub-agent in background") ?? false;
+  const displayLifecycle = parentReport ? (parentReport.status === "error" ? "error" : "completed") : lifecycle;
+  const active = lifecycle === "running" || lifecycle === "queued" || (backgroundStarted && !parentReport);
+
+  const handleCardClick = () => {
+    upsertChat({ id: call.id, title: description, model: parentModel, parentId: parentChatId, type: "subagent", createdAt: Date.now(), updatedAt: Date.now() });
+    void selectChat(call.id);
+  };
+
+  const getSubTitle = () => {
+    if (parentReport) return parentReportSummary(parentReport.content, parentReport.status);
+    if (lifecycle === "queued") return "Invoking subagent...";
+    if (lifecycle === "running") return `Invoked ${type} subagent`;
+    if (lifecycle === "error") return "Sub-agent execution failed";
+    if (backgroundStarted) return `Running ${type} subagent in background`;
+    return `Completed ${type} subagent`;
+  };
+
+  return (
+    <div className="flex w-full min-w-0 flex-col gap-1 pt-px pb-0.5">
+      <div
+        onClick={handleCardClick}
+        className="border p-2 rounded-xl transition-colors flex flex-col gap-1 items-start select-none cursor-pointer artifact-card group w-full min-w-0 overflow-hidden hover:bg-muted/50"
+      >
+        <div className="flex w-full items-center justify-between min-w-0">
+          <button className="appearance-none bg-transparent border-0 p-0 inline-flex min-w-0 flex-1 items-center gap-1 rounded-md align-middle text-sm font-medium transition-[opacity,background-color] select-none -translate-x-px pointer-events-none" style={{ padding: "1px 0.25rem 1px 0.125rem" }}>
+            <span className={cn("inline-flex items-center shrink-0", displayLifecycle === "error" ? "text-destructive" : "text-secondary-foreground")}>
+              {active ? (
+                <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
+              ) : displayLifecycle === "error" ? (
+                <AlertTriangle className="size-4 shrink-0 text-destructive" />
+              ) : (
+                <CheckCircle2 className="size-4 shrink-0 opacity-50" />
+              )}
+            </span>
+            <span className="inline-flex min-w-0 items-center gap-1 break-words leading-tight select-text">
+              {description}
+            </span>
+          </button>
+          
+          <div className="flex items-center gap-2 shrink-0">
+            <ToolTimer call={call} result={result} />
+            <Bot className="size-3.5 shrink-0 text-primary opacity-70" />
+          </div>
+        </div>
+        <div className="min-w-0 pl-[6px]">
+          <span className="block truncate text-xs text-muted-foreground">{getSubTitle()}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function parentReportSummary(content: string, status: ToolResult["status"] | Message["status"]): string {
+  const firstLine = content.split("\n", 1)[0]?.trim();
+  const match = /^Sub-agent (finished|failed|timed out|was stopped):/i.exec(firstLine || "");
+  if (match) return `Sub-agent ${match[1].toLowerCase()}`;
+  return status === "error" ? "Sub-agent failed or stopped" : "Sub-agent finished";
+}
+
+function GenericRow({ call, result, streaming }: { call: ToolCall; result?: ToolResult; streaming: boolean }) {
+  const lifecycle = toolLifecycle(result);
+  const [open, setOpen] = useState(false);
+  const label = toolActionLabel(call.name, call.arguments, lifecycle);
+  const summary = summarizeTool(call.name, call.arguments);
+
+  useEffect(() => {
+    if (lifecycle === "error") setOpen(true);
+  }, [lifecycle]);
+
+  return (
+    <CompactRow
+      verb={label}
+      error={lifecycle === "error"}
+      running={streaming && (lifecycle === "queued" || lifecycle === "running")}
+      finished={lifecycle === "completed" || lifecycle === "error"}
+      timer={<ToolTimer call={call} result={result} />}
+      expandable
+      open={open}
+      onToggle={() => setOpen((value) => !value)}
+      body={result?.content ? <ResultPanel content={result.content} /> : undefined}
+    >
+      {summary && <span className="min-w-0 truncate font-medium text-foreground/80">{summary}</span>}
+    </CompactRow>
+  );
+}
+
+function ResultPanel({ content }: { content: string }) {
+  return (
+    <div className="mt-0.5 min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-sm">
+      <div className="border-b border-border px-2 py-1 font-mono text-[11px] text-muted-foreground">tool result</div>
+      <div className="max-h-[260px] min-w-0 overflow-auto px-2 py-1">
+        <TerminalOutput chunks={[stripAnsi(content)]} compact />
+      </div>
+    </div>
+  );
+}
+
+function SwitchModeRow({ call }: { call: ToolCall }) {
+  const args = parseJsonLoose(call.arguments) || {};
+  const target = String(args.mode || "").toLowerCase();
+  const def = isChatMode(target) ? modeDef(target) : null;
+  const Icon = def?.icon ?? Sparkles;
+  return (
+    <div className="flex min-h-8 items-center gap-1.5 px-2 py-1 text-sm">
+      <Icon className="size-3.5 shrink-0 text-primary" />
+      <span className="text-secondary-foreground">Switched to</span>
+      <span className="font-medium text-foreground">{def?.label ?? (target || "a")} mode</span>
+    </div>
+  );
+}
+
+function TodoRow({ call }: { call: ToolCall }) {
+  const todos: Todo[] = parseTodos(call.arguments);
+  if (todos.length === 0) return null;
+  const done = todos.filter((t) => t.status === "completed").length;
+  return (
+    <div className="my-1 w-full min-w-0 max-w-xl overflow-hidden rounded-xl border border-card-border bg-card">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs font-medium text-secondary-foreground">
+        <Check className="size-3.5" />
+        Checked tasks
+        <span className="ml-auto tabular-nums">{done}/{todos.length}</span>
+      </div>
+      <div className="px-3 py-2">
+        {todos.map((todo, index) => (
+          <div key={`${todo.id || "todo"}-${index}`} className="flex items-center gap-2 py-1 text-sm">
+            {todo.status === "completed" ? (
+              <Check className="size-3.5 shrink-0 text-green-500" />
+            ) : todo.status === "in_progress" ? (
+              <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
+            ) : (
+              <Circle className="size-3 shrink-0 text-muted-foreground" />
+            )}
+            <span className={cn("min-w-0 break-words", todo.status === "completed" && "text-muted-foreground line-through", todo.status !== "completed" && "text-foreground/90")}>{todo.content}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

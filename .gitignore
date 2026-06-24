@@ -1,0 +1,50 @@
+# dependencies
+/node_modules
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+
+# next
+/.next
+/out
+next-env.d.ts
+*.tsbuildinfo
+
+# electron
+/dist-electron
+/release
+
+# local data (SQLite, workspaces, runtime config)
+/.data
+/.vaultgate
+/workspaces
+
+# local assistant/tooling state
+.claude/
+/.playwright-mcp
+
+# env
+.env
+.env.local
+.env*.local
+
+# reference/vendor snapshots not part of the VaultGate app
+/.archive
+/claude-code-main
+/hermes-agent-main
+/opencode-dev
+/ref
+/ref-*
+/vaultgate-production-workspace
+
+# downloaded skill/runtime binaries
+/src/skills/ppt/scripts/tectonic
+
+# misc
+*.log
+.DS_Store
+*.db
+*.sqlite
+*.sqlite3

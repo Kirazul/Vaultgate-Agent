@@ -1,0 +1,504 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Generate utility classes used inside the Streamdown package too. */
+@source "../../node_modules/streamdown/dist/*.js";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-geist-mono);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-card-border: var(--card-border);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  /* Antigravity sidebar + code + warning tokens */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-secondary: var(--sidebar-secondary);
+  --color-code-background: var(--code-background);
+  --color-code-foreground: var(--code-foreground);
+  --color-warning-border: var(--warning-border);
+  --color-warning-background: var(--warning-background);
+  --color-warning-foreground: var(--warning-foreground);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* ── Light theme (Antigravity-style, derived) ───────────────── */
+:root {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #1f1f1f;
+  --card: color-mix(in srgb, #000000 3%, #ffffff);
+  --card-foreground: #1f1f1f;
+  --card-border: color-mix(in srgb, #1f1f1f 8%, var(--card));
+  --popover: #ffffff;
+  --popover-foreground: #1f1f1f;
+  --primary: #007acc;
+  --primary-foreground: #ffffff;
+  --secondary: color-mix(in srgb, #000000 8%, #ffffff);
+  --secondary-foreground: color-mix(in srgb, #1f1f1f 80%, #ffffff);
+  --muted: color-mix(in srgb, #000000 3.5%, #ffffff);
+  --muted-foreground: color-mix(in srgb, #1f1f1f 50%, #ffffff);
+  --accent: color-mix(in srgb, #000000 8%, #ffffff);
+  --accent-foreground: #1f1f1f;
+  --destructive: #d1242f;
+  --border: rgba(0, 0, 0, 0.08);
+  --input: rgba(0, 0, 0, 0.12);
+  --ring: rgb(0 122 204 / 0.5);
+  --sidebar: color-mix(in srgb, #000000 3%, #ffffff);
+  --sidebar-muted: color-mix(in srgb, #000000 3%, var(--sidebar));
+  --sidebar-secondary: color-mix(in srgb, #000000 8%, var(--sidebar));
+  --code-background: color-mix(in srgb, #000000 6%, #ffffff);
+  --code-foreground: #1f1f1f;
+  --warning-border: rgba(154, 103, 0, 0.4);
+  --warning-background: rgba(154, 103, 0, 0.08);
+  --warning-foreground: #9a6700;
+  --radius: 0.5rem;
+}
+
+/* ── Dark theme (Antigravity, exact tokens) ─────────────────── */
+.dark {
+  color-scheme: dark;
+  --background: #101010;
+  --foreground: #cccccc;
+  --card: color-mix(in srgb, #ffffff 5%, #101010);
+  --card-foreground: #cccccc;
+  --card-border: color-mix(in srgb, #cccccc 5%, var(--card));
+  --popover: color-mix(in srgb, #ffffff 5%, #101010);
+  --popover-foreground: #cccccc;
+  --primary: #007acc;
+  --primary-foreground: #ffffff;
+  --secondary: color-mix(in srgb, #ffffff 12%, #101010);
+  --secondary-foreground: color-mix(in srgb, #cccccc 75%, #101010);
+  --muted: color-mix(in srgb, #ffffff 2.5%, #101010);
+  --muted-foreground: color-mix(in srgb, #cccccc 50%, #101010);
+  --accent: color-mix(in srgb, #ffffff 12%, #101010);
+  --accent-foreground: #cccccc;
+  --destructive: #f14c4c;
+  --border: rgba(255, 255, 255, 0.05);
+  --input: rgba(255, 255, 255, 0.08);
+  --ring: rgb(67 128 180 / 0.6);
+  --sidebar: color-mix(in srgb, #ffffff 2.5%, #101010);
+  --sidebar-muted: color-mix(in srgb, #ffffff 2.5%, color-mix(in srgb, #ffffff 2.5%, #101010));
+  --sidebar-secondary: color-mix(in srgb, #ffffff 12%, color-mix(in srgb, #ffffff 2.5%, #101010));
+  --code-background: color-mix(in srgb, #ffffff 8%, #101010);
+  --code-foreground: #cccccc;
+  --warning-border: rgba(210, 153, 34, 0.4);
+  --warning-background: rgba(210, 153, 34, 0.1);
+  --warning-foreground: #d29922;
+}
+
+/* ── Per-mode accents (orchestrated; the active mode sets data-mode) ── */
+/* VaultGate Code — Claude-style terracotta. */
+[data-mode="code"] {
+  --primary: #d97757;
+  --primary-foreground: #1a0f0a;
+  --ring: rgb(217 119 87 / 0.55);
+}
+/* Chat — calm violet. */
+[data-mode="chat"] {
+  --primary: #8b5cf6;
+  --primary-foreground: #ffffff;
+  --ring: rgb(139 92 246 / 0.5);
+}
+/* Accent-driven surfaces ease between modes (the overlay masks the swap,
+   this smooths anything still visible at the edges). */
+.mode-root {
+  transition: background-color 0.4s ease;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  *::-webkit-scrollbar {
+    display: none;
+    height: 0;
+    width: 0;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+.font-primary {
+  font-family: var(--font-inter), system-ui, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+}
+
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+.app-drag-region {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.app-no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* ── Antigravity helper classes ─────────────────────────────── */
+
+/* The 1px gradient/hairline frame used on user bubbles + composer:
+   an outer element with `bg-card-border` padding wraps the inner `bg-card`. */
+.bg-card-border {
+  background-color: var(--card-border);
+}
+
+/* Tool / artifact cards — bordered rounded-xl pills that lighten on hover. */
+.artifact-card {
+  border-color: var(--card-border);
+}
+.artifact-card:hover {
+  background-color: var(--muted);
+}
+
+/* File-change "N files changed +X -Y · Review" bar. */
+.files-changed-header {
+  border-color: var(--card-border);
+}
+
+/* Mid-conversation "Message from sub-agent" rule label. */
+.sub-agent-rule {
+  background-color: var(--secondary);
+}
+
+/* ── Animations (ported from legacy, de-branded) ───────────── */
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes fade-in {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+.animate-fade-in {
+  animation: fade-in 0.18s ease-out;
+}
+
+/* Workspace panel mount: slide in from the right and fade. */
+@keyframes panelIn {
+  0% { opacity: 0; transform: translateX(16px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+.animate-panel-in {
+  animation: panelIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes doneGlow {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  35% { box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.35), 0 0 28px rgba(16, 185, 129, 0.22); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+@keyframes runningSweep {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(120%); }
+}
+
+/* Blinking caret shown while a message streams. */
+.streaming-cursor {
+  animation: blink 1s step-end infinite;
+  background-color: currentColor;
+  border-radius: 1px;
+  display: inline-block;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  width: 2px;
+}
+
+/* Entrance animation for new message bubbles. Opacity-only — a transform
+   here would break `position: sticky` on the pinned user message. */
+.waterfall {
+  animation: fade-in 0.18s ease-out;
+}
+
+.task-done-glow {
+  animation: doneGlow 900ms ease-out;
+}
+
+.tool-running-shimmer {
+  position: relative;
+}
+.tool-running-shimmer::after {
+  animation: runningSweep 1.6s ease-in-out infinite;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+/* Plan approval → execution: a brief accent glow that settles into a ring,
+   while the card transitions out (handled by transition-all on the element). */
+@keyframes planApproveGlow {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 0%, transparent); }
+  40% { box-shadow: 0 0 0 1px var(--primary), 0 0 32px color-mix(in srgb, var(--primary) 32%, transparent); }
+  100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 45%, transparent); }
+}
+.plan-approving {
+  animation: planApproveGlow 720ms ease-out forwards;
+}
+/* Sweeping bar for the "building…" hand-off. */
+.plan-build-sweep {
+  animation: runningSweep 0.9s ease-in-out infinite;
+}
+
+/* ── Diff lines (used in ToolCalls inline diffs & Review tab) ── */
+
+.diff-line-removed {
+  background-color: rgba(115, 24, 30, 0.62);
+}
+
+.diff-line-added {
+  background-color: rgba(61, 82, 35, 0.72);
+}
+
+.diff-gutter {
+  flex-shrink: 0;
+  width: 1.25rem;
+  text-align: center;
+  user-select: none;
+}
+
+.review-line:hover,
+.review-split-cell:hover {
+  background-color: rgba(255, 255, 255, 0.035);
+}
+
+/* ── Review tab gutter (line numbers) ── */
+
+.review-gutter {
+  display: inline-block;
+  width: 2.6rem;
+  padding-right: 0.55rem;
+  text-align: right;
+  font-size: 10px;
+  line-height: inherit;
+  color: rgba(161, 161, 170, 0.35);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.review-gutter-old {
+  color: rgba(239, 68, 68, 0.30);
+}
+
+.review-gutter-new {
+  color: rgba(16, 185, 129, 0.30);
+}
+
+/* ── Review diff container max-height ── */
+.review-diff-container {
+  max-height: 600px;
+}
+
+/* ── File change summary bar ── */
+.file-change-summary {
+  backdrop-filter: blur(8px);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.file-change-summary:hover {
+  background-color: rgba(39, 39, 42, 0.5);
+  border-color: rgba(63, 63, 70, 0.8);
+}
+
+/* ══ Mode transformation overlay ══════════════════════════════
+   A full-viewport "evolving" sweep played whenever the mode changes.
+   --mode-accent is set inline from the mode registry. */
+.mode-transition {
+  animation: modeFade 1.15s ease forwards;
+}
+.mode-transition::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--mode-accent) 32%, transparent) 0%, transparent 58%),
+    color-mix(in srgb, #000 78%, var(--mode-accent));
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+@keyframes modeFade {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  72% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Tech grid that pulses outward from the centre. */
+.mode-transition-grid {
+  position: absolute;
+  inset: -2px;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--mode-accent) 60%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--mode-accent) 60%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 0%, transparent 62%);
+  mask-image: radial-gradient(circle at 50% 50%, #000 0%, transparent 62%);
+  opacity: 0;
+  animation: modeGrid 1.15s ease;
+}
+@keyframes modeGrid {
+  0% { opacity: 0; transform: scale(1.18); }
+  35% { opacity: 0.14; transform: scale(1); }
+  70% { opacity: 0.1; }
+  100% { opacity: 0; transform: scale(0.96); }
+}
+
+/* Bright accent scan-line sweeping top → bottom. */
+.mode-transition-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 34vh;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--mode-accent) 55%, transparent),
+    transparent
+  );
+  filter: blur(10px);
+  animation: modeScan 1.0s cubic-bezier(0.7, 0, 0.25, 1);
+}
+@keyframes modeScan {
+  0% { transform: translateY(-45vh); opacity: 0; }
+  18% { opacity: 1; }
+  82% { opacity: 1; }
+  100% { transform: translateY(115vh); opacity: 0; }
+}
+
+/* Centre badge: name + tagline. Opacity/scale only — never blur the text. */
+.mode-transition-core {
+  position: relative;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  animation: modeCore 1.15s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes modeCore {
+  0% { opacity: 0; transform: scale(0.94); }
+  22% { opacity: 1; }
+  74% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.02); }
+}
+.mode-transition-icon {
+  color: var(--mode-accent);
+  filter: drop-shadow(0 0 22px color-mix(in srgb, var(--mode-accent) 80%, transparent));
+  animation: modeIcon 1.05s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes modeIcon {
+  0% { transform: scale(0.6) rotate(-12deg); }
+  60% { transform: scale(1.08) rotate(0deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+.mode-transition-title {
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #ffffff;
+  text-shadow: 0 0 14px color-mix(in srgb, var(--mode-accent) 55%, transparent);
+}
+.mode-transition-tag {
+  font-size: 0.72rem;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--mode-accent) 70%, #ffffff);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-transition,
+  .mode-transition-grid,
+  .mode-transition-scan,
+  .mode-transition-core,
+  .mode-transition-icon {
+    animation-duration: 0.4s;
+  }
+}
+
+/* Dialog entrance — clean, minimal, smooth (Inventory etc.) */
+@keyframes vgOverlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes vgPopIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes vgSlideIn {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.vg-overlay-in { animation: vgOverlayIn 160ms ease-out; }
+.vg-pop-in {
+  animation: vgPopIn 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+.vg-slide-in { animation: vgSlideIn 200ms cubic-bezier(0.16, 1, 0.3, 1); }
+
+/* Dialog / panel exit — mirror the entrance so closing slides out instead of
+   snapping away. Driven by useMountTransition keeping the node mounted. */
+@keyframes vgOverlayOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes vgPopOut {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(8px) scale(0.97); }
+}
+@keyframes panelOut {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(18px); }
+}
+.vg-overlay-out { animation: vgOverlayOut 170ms ease-in forwards; }
+.vg-pop-out {
+  animation: vgPopOut 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+.animate-panel-out { animation: panelOut 200ms cubic-bezier(0.4, 0, 1, 1) forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .vg-overlay-in,
+  .vg-pop-in,
+  .vg-slide-in,
+  .vg-overlay-out,
+  .vg-pop-out,
+  .animate-panel-out { animation: none; }
+}
