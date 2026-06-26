@@ -47,6 +47,7 @@ export function ChatApp() {
   const fetchModels = useSettingsStore((s) => s.fetchModels);
   const model = useSettingsStore((s) => s.provider.model);
   const mode = useSettingsStore((s) => s.mode);
+  const autoMode = useSettingsStore((s) => s.autoMode);
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
 
   const loadProjects = useProjectStore((s) => s.load);
@@ -371,7 +372,7 @@ export function ChatApp() {
   const showWorkspaceHandle = Boolean(workspaceChatId && !showPanel && !panelClosing);
 
   return (
-    <div data-mode={mode} suppressHydrationWarning className="mode-root flex h-screen overflow-hidden bg-[var(--ui-bg-chrome)] text-foreground">
+    <div data-mode={mode} data-auto={autoMode ? "true" : undefined} suppressHydrationWarning className="mode-root flex h-screen overflow-hidden bg-[var(--ui-bg-chrome)] text-foreground">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />
@@ -447,13 +448,24 @@ export function ChatApp() {
 }
 
 async function ensureDraftChatRoot(chatId: string, model: string): Promise<void> {
-  const chatStore = useChatStore.getState();
-  if (chatStore.messages(chatId).length > 0) return;
-
   const projectId = useProjectStore.getState().activeProjectId ?? null;
+  const chatStore = useChatStore.getState();
   const chat = chatStore.chats.find((item) => item.id === chatId);
-  if ((chat?.projectId ?? null) !== projectId) await chatStore.setChatProject(chatId, projectId);
 
+  // Always bind the project before the first server-side tool execution.
+  // The server rejects the project binding if messages already exist (workspace
+  // is locked), which is the correct guard — but we must always attempt it so a
+  // newly-created chat gets the project folder as its workspace root.
+  if (projectId && (chat?.projectId ?? null) !== projectId) {
+    try {
+      await chatStore.setChatProject(chatId, projectId);
+    } catch {
+      /* 409 = workspace locked after messages — keep existing project binding */
+    }
+  }
+
+  // Ensure the chat row exists in the DB with the project binding. If it already
+  // exists and has messages, the ON CONFLICT preserves the locked workspace path.
   const res = await fetch("/api/chats", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

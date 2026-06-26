@@ -486,6 +486,17 @@ function liveFilePath(args: string): string {
   return findStringField(args, ["filepath", "file_path", "filePath", "path", "relativePath", "relative_path", "source", "destination", "from", "to", "oldPath", "old_path", "newPath", "new_path", "target", "filename"]);
 }
 
+function fileActionHint(toolName: string, lifecycle: ToolLifecycle): string {
+  const spec = toolDisplaySpec(toolName);
+  switch (toolName) {
+    case "write": return lifecycle === "completed" ? "new file" : "creating file\u2026";
+    case "edit": case "multiedit": return lifecycle === "completed" ? spec.completed : "editing file\u2026";
+    case "applypatch": return lifecycle === "completed" ? spec.completed : "patching\u2026";
+    case "delete": return lifecycle === "completed" ? spec.completed : "deleting file\u2026";
+    case "move": return lifecycle === "completed" ? spec.completed : "moving file\u2026";
+    default: return spec[lifecycle];
+  }
+}
 function patchTargetSummary(args: string): string {
   const patch = extractStringField(args, ["patch", "input"]);
   const diffs = collectPatchDiffs(patch);
@@ -648,7 +659,7 @@ function EditedRow({
         </span>
       ) : (
         <span className="truncate font-mono text-[length:var(--conversation-tool-font-size)] italic text-[var(--ui-text-tertiary)]">
-          {writing || pending ? "path pending" : "file path unavailable"}
+          {fileActionHint(toolName, lifecycle)}
         </span>
       )}
       {writing ? (

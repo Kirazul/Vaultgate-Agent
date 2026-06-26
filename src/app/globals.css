@@ -161,6 +161,14 @@
   --primary-foreground: #ffffff;
   --ring: rgb(139 92 246 / 0.5);
 }
+/* Auto — neutral slate. When auto mode is on, the model may switch branches
+   freely; this accent is distinct from all three mode-locked colors so the UI
+   reads as "discovering / open" instead of prematurely declaring a mode. */
+[data-auto="true"] {
+  --primary: #6b7fa8;
+  --primary-foreground: #ffffff;
+  --ring: rgb(107 127 168 / 0.5);
+}
 /* Accent-driven surfaces ease between modes (the overlay masks the swap,
    this smooths anything still visible at the edges). */
 .mode-root {

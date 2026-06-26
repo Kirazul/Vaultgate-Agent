@@ -122,6 +122,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messagesByChat: { ...s.messagesByChat, [id]: [] },
       currentChatId: id,
     }));
+    // Persist the chat row so the project binding lands before the first message.
+    // The workspace root must be locked to the project folder before the first
+    // tool execution, otherwise writes land in the default VaultGate workspace.
     void fetch("/api/chats", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
