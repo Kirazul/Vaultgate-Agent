@@ -157,9 +157,80 @@ function firstString(...values: unknown[]): string {
   return "";
 }
 
+function decodePartialJsonString(raw: string): string {
+  let safe = raw;
+  if (safe.endsWith("\\")) safe = safe.slice(0, -1);
+  try {
+    return JSON.parse(`"${safe.replace(/\r?\n/g, "\\n")}"`) as string;
+  } catch {
+    return safe
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "\r")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\");
+  }
+}
+
+function extractPartialJsonStrings(source: string, key: string): string[] {
+  const values: string[] = [];
+  const needle = `"${key}"`;
+  let searchAt = 0;
+  while (searchAt < source.length) {
+    const keyAt = source.indexOf(needle, searchAt);
+    if (keyAt === -1) break;
+    const colonAt = source.indexOf(":", keyAt + needle.length);
+    if (colonAt === -1) break;
+    const quoteAt = source.indexOf('"', colonAt + 1);
+    if (quoteAt === -1) break;
+
+    let escaped = false;
+    let end = quoteAt + 1;
+    while (end < source.length) {
+      const char = source[end];
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') break;
+      end++;
+    }
+    values.push(decodePartialJsonString(source.slice(quoteAt + 1, end)));
+    searchAt = Math.max(end + 1, quoteAt + 1);
+  }
+  return values.map((value) => value.trim()).filter(Boolean);
+}
+
+export function extractStringField(args: string, keys: string[]): string {
+  const parsed = parseJsonLoose(args) || {};
+  for (const key of keys) {
+    const value = parsed[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  for (const key of keys) {
+    const value = extractPartialJsonStrings(args, key)[0];
+    if (value) return value;
+  }
+  return "";
+}
+
 export function extractFilePath(args: string): string {
-  const a = parseJsonLoose(args) || {};
-  return firstString(a.filepath, a.file_path, a.path, a.relativePath, a.source, a.destination);
+  return extractStringField(args, [
+    "filepath",
+    "file_path",
+    "filePath",
+    "path",
+    "relativePath",
+    "relative_path",
+    "source",
+    "destination",
+    "from",
+    "to",
+    "oldPath",
+    "old_path",
+    "newPath",
+    "new_path",
+    "target",
+    "filename",
+  ]);
 }
 
 export function summarizeTool(name: string, args: string): string {
@@ -171,7 +242,8 @@ export function summarizeTool(name: string, args: string): string {
   if (n === "glob") return firstString(a.pattern) || "find files";
   if (n === "skill") return firstString(a.command) || "load skill";
   if (n === "applypatch") {
-    const files = (String(a.patch || "").match(/^\*\*\* (?:Update|Add|Delete) File:/gm) || []).length;
+    const patch = extractStringField(args, ["patch", "input"]);
+    const files = (patch.match(/^\*\*\* (?:Update|Add|Delete) File:/gm) || []).length;
     return files ? `${files} file${files === 1 ? "" : "s"}` : "apply patch";
   }
   if (n === "kanban") {
@@ -293,25 +365,25 @@ export function diffStats(name: string, args: string): { added: number; removed:
   const n = normalizeToolName(name);
   const a = parseJsonLoose(args) || {};
   if (n === "write") {
-    const c = String(a.content || "");
+    const c = String(a.content || extractStringField(args, ["content"]));
     return c ? { added: c.replace(/\r\n/g, "\n").split("\n").length, removed: 0 } : null;
   }
   if (n === "edit") {
-    return diffRowStats(lineDiff(String(a.old_str || ""), String(a.new_str || "")));
+    return diffRowStats(lineDiff(String(a.old_str || extractStringField(args, ["old_str"])), String(a.new_str || extractStringField(args, ["new_str"]))));
   }
   if (n === "multiedit") {
     const edits = Array.isArray(a.edits) ? (a.edits as Array<Record<string, unknown>>) : [];
     let added = 0;
     let removed = 0;
     for (const e of edits) {
-      const s = diffRowStats(lineDiff(String(e.old_str || ""), String(e.new_str || "")));
+      const s = diffRowStats(lineDiff(String(e.old_str || extractStringField(args, ["old_str"])), String(e.new_str || extractStringField(args, ["new_str"]))));
       added += s.added;
       removed += s.removed;
     }
     return { added, removed };
   }
   if (n === "applypatch") {
-    const patchDiffs = collectPatchDiffs(String(a.patch || a.input || ""));
+    const patchDiffs = collectPatchDiffs(extractStringField(args, ["patch", "input"]));
     if (patchDiffs.length === 0) return null;
     return patchDiffs.reduce(
       (total, diff) => ({ added: total.added + diff.stats.added, removed: total.removed + diff.stats.removed }),
@@ -471,7 +543,7 @@ export function collectFileDiffs(calls: ToolCall[]): FileDiffEntry[] {
     if (!["write", "edit", "multiedit", "applypatch", "delete", "move"].includes(n)) continue;
     const a = parseJsonLoose(call.arguments) || {};
     if (n === "applypatch") {
-      for (const patchDiff of collectPatchDiffs(String(a.patch || a.input || ""))) {
+      for (const patchDiff of collectPatchDiffs(extractStringField(call.arguments, ["patch", "input"]))) {
         const existing = entries.find((entry) => entry.filePath === patchDiff.filePath);
         if (existing) {
           existing.hunks.push(...patchDiff.hunks);
@@ -483,12 +555,12 @@ export function collectFileDiffs(calls: ToolCall[]): FileDiffEntry[] {
       }
       continue;
     }
-    const moveSource = firstString(a.source, a.from, a.oldPath, a.old_path);
-    const moveDestination = firstString(a.destination, a.dest, a.to, a.newPath, a.new_path);
-    const fp = n === "move" && moveSource && moveDestination ? `${moveSource} → ${moveDestination}` : extractFilePath(call.arguments) || "untitled";
+    const moveSource = firstString(a.source, a.from, a.oldPath, a.old_path) || extractStringField(call.arguments, ["source", "from", "oldPath", "old_path"]);
+    const moveDestination = firstString(a.destination, a.dest, a.to, a.newPath, a.new_path) || extractStringField(call.arguments, ["destination", "dest", "to", "newPath", "new_path"]);
+    const fp = n === "move" && moveSource && moveDestination ? `${moveSource} → ${moveDestination}` : extractFilePath(call.arguments) || "unknown file";
     const hunks: { old: string; next: string }[] = [];
-    if (n === "write") hunks.push({ old: "", next: String(a.content ?? "") });
-    else if (n === "edit") hunks.push({ old: String(a.old_str ?? ""), next: String(a.new_str ?? "") });
+    if (n === "write") hunks.push({ old: "", next: String(a.content ?? extractStringField(call.arguments, ["content"])) });
+    else if (n === "edit") hunks.push({ old: String(a.old_str ?? extractStringField(call.arguments, ["old_str"])), next: String(a.new_str ?? extractStringField(call.arguments, ["new_str"])) });
     else if (n === "multiedit") {
       for (const e of Array.isArray(a.edits) ? (a.edits as Array<Record<string, unknown>>) : []) {
         hunks.push({ old: String(e?.old_str ?? ""), next: String(e?.new_str ?? "") });

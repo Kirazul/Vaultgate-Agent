@@ -19,7 +19,7 @@ import { useSettingsStore } from "@/lib/store/settings-store";
 import { useWorkspaceStore } from "@/lib/store/workspace-store";
 import { canonicalToolName } from "@/lib/ai/tools/definitions";
 import { firstVisibleLine, sanitizeToolLeakBlocks, sanitizeToolLeakText } from "@/lib/ai/tool-leak-sanitizer";
-import type { ChatRequest, ContentBlock, Message, StreamEvent } from "@/types";
+import type { ChatRequest, ContentBlock, Message, StreamEvent, ToolResult } from "@/types";
 import { uid } from "@/lib/utils";
 
 function parseLooseObject(value: string): Record<string, unknown> {
@@ -178,6 +178,7 @@ export function useChatStream() {
     // re-parse cost bounded as the message grows (the source of the lag).
     const builder = new BlockBuilder();
     const toolNamesById = new Map<string, string>();
+    const toolResultStatusById = new Map<string, ToolResult["status"]>();
     const initializedToolIds = new Set<string>();
     const startedAt = Date.now();
     // ~30ms (~33fps) reads as smooth, continuous typing while still coalescing
@@ -196,6 +197,12 @@ export function useChatStream() {
         content: sanitizeToolLeakText(builder.plain()),
         blocks,
       });
+    };
+
+    const commitNow = () => {
+      if (!dirty) return;
+      lastCommit = typeof performance !== "undefined" ? performance.now() : Date.now();
+      commit();
     };
 
     const flush = (now: number) => {
@@ -254,15 +261,20 @@ export function useChatStream() {
                   updatedAt: Date.now(),
                 });
               }
+              commitNow();
               break;
             }
-            case "tool_result":
+            case "tool_result": {
+              const previousStatus = toolResultStatusById.get(event.id);
               builder.addToolResult(event.id, event.status, event.content);
+              toolResultStatusById.set(event.id, event.status);
               dirty = true;
+              if (event.status !== "running" || previousStatus !== "running") commitNow();
               if (event.status !== "running" && isWorkspaceChangingTool(toolNamesById.get(event.id))) {
                 useWorkspaceStore.getState().bumpWorkspace();
               }
               break;
+            }
             case "terminal":
               useWorkspaceStore.getState().appendTerminal(chatId, event.chunk, event.id);
               break;

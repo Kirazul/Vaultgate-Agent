@@ -186,6 +186,7 @@ export function streamAgent(req: ChatRequest): ReadableStream<Uint8Array> {
             for (const call of calls) {
               emit({ type: "tool_call", id: call.id, name: call.name, arguments: call.arguments });
             }
+            if (calls.length > 0) await sleep(0, abortController.signal).catch(() => undefined);
 
             // Apply mode switches FIRST so any other calls this turn (and the
             // next turn) run under the new branch. Each SwitchMode call still
@@ -1122,6 +1123,7 @@ async function runToolCall(
 ): Promise<ToolExecutionResult> {
   let streamedOutput = "";
   emit({ type: "tool_result", id: call.id, status: "running", content: "" });
+  await sleep(0, signal).catch(() => undefined);
 
   const result = await executeTool(call.name, call.parsed, {
     chatId,

@@ -25,6 +25,7 @@ import {
   lineDiff,
   type DiffRow,
   extractFilePath,
+  extractStringField,
   isResearchTool,
   lifecycleLabel,
   normalizeToolName,
@@ -168,7 +169,7 @@ function ToolRow({ call, result, streaming, chatId }: { call: ToolCall; result?:
   if (name === "switchmode") return <SwitchModeRow call={call} />;
   if (name === "todowrite") return <TodoRow call={call} />;
   if (name === "bash") return <TerminalRow call={call} result={result} />;
-  if (["write", "edit", "multiedit", "applypatch", "delete", "move"].includes(name)) return <EditRow call={call} result={result} streaming={streaming} chatId={chatId} />;
+  if (["write", "edit", "multiedit", "applypatch", "delete", "move"].includes(name)) return <EditRow call={call} result={result} chatId={chatId} />;
   if (name === "task") return <AgentRow call={call} result={result} parentChatId={chatId} />;
   if (name === "skill") return <SkillRow call={call} result={result} streaming={streaming} />;
   return <GenericRow call={call} result={result} streaming={streaming} />;
@@ -325,8 +326,10 @@ function ExploredGroup({ calls, results, active }: { calls: ToolCall[]; results:
   const [open, setOpen] = useState(false);
   const { files, folders } = countExploredItems(calls);
   const webOnly = calls.every((call) => ["webfetch", "websearch"].includes(normalizeToolName(call.name)));
-  const failed = calls.some((call) => toolLifecycle(results.find((r) => r.toolCallId === call.id)) === "error");
-  const running = active && calls.some((call) => ["queued", "running"].includes(toolLifecycle(results.find((r) => r.toolCallId === call.id))));
+  const lifecycles = calls.map((call) => toolLifecycle(results.find((r) => r.toolCallId === call.id)));
+  const failed = lifecycles.some((lifecycle) => lifecycle === "error");
+  const running = active && lifecycles.some((lifecycle) => lifecycle === "running");
+  const queued = active && !running && lifecycles.some((lifecycle) => lifecycle === "queued");
 
   useEffect(() => {
     if (failed) setOpen(true);
@@ -337,7 +340,7 @@ function ExploredGroup({ calls, results, active }: { calls: ToolCall[]; results:
   if (folders > 0) parts.push(`${folders} folder${folders === 1 ? "" : "s"}`);
   const folderCalls = calls.filter((call) => normalizeToolName(call.name) === "ls");
   const singleFolderPath = folderCalls.length === 1 ? extractFilePath(folderCalls[0].arguments) || summarizeTool(folderCalls[0].name, folderCalls[0].arguments) : "";
-  const verbLabel = webOnly ? (running ? "Searching" : "Searched") : (running ? "Exploring" : "Explored");
+  const verbLabel = webOnly ? (running ? "Searching" : queued ? "Queued search" : "Searched") : (running ? "Exploring" : queued ? "Queued exploration" : "Explored");
   const itemLabel = webOnly ? "the web" : singleFolderPath ? `folder ${singleFolderPath}` : parts.length > 0 ? parts.join(", ") : `${calls.length} item${calls.length === 1 ? "" : "s"}`;
 
   return (
@@ -348,6 +351,7 @@ function ExploredGroup({ calls, results, active }: { calls: ToolCall[]; results:
         className="group/row flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-[length:var(--conversation-tool-font-size)] tabular-nums transition-colors hover:text-foreground"
       >
         {running && <Loader2 className="size-3 shrink-0 animate-spin text-[var(--ui-text-tertiary)]" />}
+        {queued && <Circle className="size-3 shrink-0 text-[var(--ui-text-quaternary)]" />}
         {failed && <AlertTriangle className="size-3.5 shrink-0 text-destructive" />}
         <span className={cn("shrink-0 font-medium", failed ? "text-destructive" : "text-[var(--ui-text-secondary)]")}>{verbLabel}</span>
         <span className="truncate text-[var(--ui-text-secondary)]">{itemLabel}</span>
@@ -367,8 +371,10 @@ function ExploredGroup({ calls, results, active }: { calls: ToolCall[]; results:
                   <div className="flex min-h-6 items-center gap-1.5 px-1 text-[length:var(--conversation-tool-font-size)] text-[var(--ui-text-secondary)]">
                     {lifecycle === "error" ? (
                       <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
-                    ) : lifecycle === "running" || lifecycle === "queued" ? (
+                    ) : lifecycle === "running" ? (
                       <Loader2 className="size-3 shrink-0 animate-spin text-[var(--ui-text-tertiary)]" />
+                    ) : lifecycle === "queued" ? (
+                      <Circle className="size-3 shrink-0 text-[var(--ui-text-quaternary)]" />
                     ) : (
                       <span className="size-1 shrink-0 rounded-full bg-[var(--ui-text-quaternary)]" />
                     )}
@@ -477,7 +483,15 @@ function countLines(value: string): number {
 }
 
 function liveFilePath(args: string): string {
-  return findStringField(args, ["filepath", "file_path", "path", "relativePath", "source", "destination"]);
+  return findStringField(args, ["filepath", "file_path", "filePath", "path", "relativePath", "relative_path", "source", "destination", "from", "to", "oldPath", "old_path", "newPath", "new_path", "target", "filename"]);
+}
+
+function patchTargetSummary(args: string): string {
+  const patch = extractStringField(args, ["patch", "input"]);
+  const diffs = collectPatchDiffs(patch);
+  if (diffs.length === 0) return "patch";
+  if (diffs.length === 1) return diffs[0].filePath;
+  return `${diffs.length} files`;
 }
 
 function writtenContent(name: string, args: string): string {
@@ -509,8 +523,7 @@ function liveDiffStats(name: string, args: string): { added: number; removed: nu
     };
   }
   if (n === "applypatch") {
-    const a = parseJsonLoose(args) || {};
-    return collectPatchDiffs(String(a.patch || a.input || "")).reduce(
+    return collectPatchDiffs(extractStringField(args, ["patch", "input"])).reduce(
       (total, diff) => ({ added: total.added + diff.stats.added, removed: total.removed + diff.stats.removed }),
       { added: 0, removed: 0 },
     );
@@ -518,77 +531,62 @@ function liveDiffStats(name: string, args: string): { added: number; removed: nu
   return { added: 0, removed: 0 };
 }
 
-function EditRow({ call, result, streaming, chatId }: { call: ToolCall; result?: ToolResult; streaming: boolean; chatId: string }) {
-  const fp = extractFilePath(call.arguments) || liveFilePath(call.arguments);
+function EditRow({ call, result, chatId }: { call: ToolCall; result?: ToolResult; chatId: string }) {
+  const toolName = normalizeToolName(call.name);
+  const directFp = extractFilePath(call.arguments) || liveFilePath(call.arguments);
+  const patchSummary = toolName === "applypatch" && !directFp ? patchTargetSummary(call.arguments) : "";
+  const fp = directFp || (/^(?:\d+ files|patch)$/.test(patchSummary) ? "" : patchSummary);
   const liveStats = liveDiffStats(call.name, call.arguments);
   const stats = diffStats(call.name, call.arguments) ?? liveStats;
   const lifecycle = toolLifecycle(result);
   const label = lifecycleLabel(toolDisplaySpec(call.name), lifecycle);
-  // A Write that overwrote an existing file should read as an edit, not a
-  // create. The server reports "File updated" vs "File created"; fall back to
-  // the static spec label when there's no result yet.
-  const writeOverwrote = normalizeToolName(call.name) === "write" && /file updated/i.test(result?.content ?? "");
+  const writeOverwrote = toolName === "write" && /file updated/i.test(result?.content ?? "");
   const resolvedLabel = writeOverwrote ? (lifecycle === "error" ? "Edit failed" : "Edited") : label;
-
-  // Start in writing mode only for active streams — initialised from the prop
-  // so even if the result arrives in the same React batch as the tool call,
-  // the "Creating/Editing" card is shown first.
-  const [showWriting, setShowWriting] = useState(() => streaming);
-
-  useEffect(() => {
-    if (!showWriting) return;
-    // Result arrived → hold the line counter visible for 500 ms so the user can
-    // read the final count, then transition to the completed card.
-    if (lifecycle === "completed" || lifecycle === "error") {
-      const t = setTimeout(() => setShowWriting(false), 500);
-      return () => clearTimeout(t);
-    }
-  }, [lifecycle, showWriting]);
-
-  useEffect(() => {
-    // Stream ended without a result (message cancelled mid-write) → hide immediately.
-    if (!streaming && showWriting && !result) setShowWriting(false);
-  }, [streaming, showWriting, result]);
-
-  const writing = showWriting;
+  const writing = lifecycle === "running";
+  const pending = lifecycle === "queued";
+  const detail = toolName === "applypatch" && !fp ? patchSummary : "";
 
   const openFile = () => {
     if (!fp) return;
     useWorkspaceStore.getState().activate(chatId, "code");
-    const detail = fp.replace(/^\/+/, "");
+    const rel = fp.replace(/^\/+/, "");
     const emit = () => {
-      window.dispatchEvent(new CustomEvent("vaultgate:open-workspace-path", { detail }));
-      window.dispatchEvent(new CustomEvent("vaultgate:open-file", { detail }));
+      window.dispatchEvent(new CustomEvent("vaultgate:open-workspace-path", { detail: rel }));
+      window.dispatchEvent(new CustomEvent("vaultgate:open-file", { detail: rel }));
     };
     emit();
     window.setTimeout(emit, 50);
   };
 
-  return <EditedRow call={call} result={result} fp={fp} label={resolvedLabel} stats={stats} liveStats={liveStats} lifecycle={lifecycle} openFile={openFile} writing={writing} toolName={normalizeToolName(call.name)} writeOverwrote={writeOverwrote} />;
+  return <EditedRow call={call} result={result} fp={fp} detail={detail} label={resolvedLabel} stats={stats} liveStats={liveStats} lifecycle={lifecycle} openFile={openFile} writing={writing} pending={pending} toolName={toolName} writeOverwrote={writeOverwrote} />;
 }
 
 function EditedRow({
   call,
   result,
   fp,
+  detail,
   label,
   stats,
   liveStats,
   lifecycle,
   openFile,
   writing,
+  pending,
   toolName,
   writeOverwrote,
 }: {
   call: ToolCall;
   result?: ToolResult;
   fp: string;
+  detail: string;
   label: string;
   stats: { added: number; removed: number } | null;
   liveStats: { added: number; removed: number };
   lifecycle: ToolLifecycle;
   openFile: () => void;
   writing: boolean;
+  pending: boolean;
   toolName: string;
   writeOverwrote: boolean;
 }) {
@@ -598,7 +596,9 @@ function EditedRow({
   }, [lifecycle]);
 
   const isError = lifecycle === "error";
-  const body = isError && result?.content ? <ResultPanel content={result.content} /> : <DiffView call={call} />;
+  const diffHunks = getDiffHunks(call);
+  const hasDiff = diffHunks.length > 0 && !diffHunks.every((h) => !h.old && !h.next);
+  const body = isError && result?.content ? <ResultPanel content={result.content} /> : hasDiff ? <DiffView hunks={diffHunks} name={normalizeToolName(call.name)} /> : undefined;
   const writingVerb = toolName === "write" ? (writeOverwrote ? "Editing" : "Creating") : toolName === "applypatch" ? "Applying patch" : toolName === "delete" ? "Deleting" : toolName === "move" ? "Moving" : "Editing";
   const verbClass = !writing
     ? undefined
@@ -621,9 +621,9 @@ function EditedRow({
       error={isError}
       running={writing}
       timer={<ToolTimer call={call} result={result} />}
-      expandable={!writing}
-      open={!writing && open}
-      onToggle={() => setOpen((v) => !v)}
+      expandable={!writing && !pending && Boolean(body)}
+      open={!writing && !pending && open}
+      onToggle={!writing && !pending ? () => setOpen((v) => !v) : undefined}
       trailing={
         fp ? (
           <button
@@ -642,9 +642,13 @@ function EditedRow({
     >
       {fp ? (
         <FileChip path={fp} onClick={openFile} />
+      ) : detail ? (
+        <span className="truncate font-mono text-[length:var(--conversation-tool-font-size)] text-[var(--ui-text-secondary)]">
+          {detail}
+        </span>
       ) : (
         <span className="truncate font-mono text-[length:var(--conversation-tool-font-size)] italic text-[var(--ui-text-tertiary)]">
-          {writing ? "untitled" : "(no file)"}
+          {writing || pending ? "path pending" : "file path unavailable"}
         </span>
       )}
       {writing ? (
@@ -673,24 +677,28 @@ function EditedRow({
             )}
           />
         </span>
-      ) : (
+      ) : pending ? null : (
         <StatPair stats={stats} showZero />
       )}
     </CompactRow>
   );
 }
 
-function DiffView({ call }: { call: ToolCall }) {
+function getDiffHunks(call: ToolCall): { old: string; next: string }[] {
   const name = normalizeToolName(call.name);
   const a = parseJsonLoose(call.arguments) || {};
   const hunks: { old: string; next: string }[] = [];
-  if (name === "write") hunks.push({ old: "", next: String(a.content ?? "") });
-  else if (name === "edit") hunks.push({ old: String(a.old_str ?? ""), next: String(a.new_str ?? "") });
+  if (name === "write") hunks.push({ old: "", next: String(a.content ?? findStringField(call.arguments, ["content"])) });
+  else if (name === "edit") hunks.push({ old: String(a.old_str ?? findStringField(call.arguments, ["old_str"])), next: String(a.new_str ?? findStringField(call.arguments, ["new_str"])) });
   else if (name === "multiedit") {
     for (const e of Array.isArray(a.edits) ? (a.edits as Array<Record<string, unknown>>) : []) hunks.push({ old: String(e?.old_str ?? ""), next: String(e?.new_str ?? "") });
   } else if (name === "applypatch") {
-    for (const entry of collectPatchDiffs(String(a.patch || a.input || ""))) hunks.push(...entry.hunks);
+    for (const entry of collectPatchDiffs(extractStringField(call.arguments, ["patch", "input"]))) hunks.push(...entry.hunks);
   }
+  return hunks;
+}
+
+function DiffView({ hunks, name }: { hunks: { old: string; next: string }[]; name: string }) {
   if (hunks.length === 0 || hunks.every((h) => !h.old && !h.next)) return null;
 
   return (
@@ -787,9 +795,9 @@ function TerminalRow({ call, result }: { call: ToolCall; result?: ToolResult }) 
     <CompactRow
       verb={label}
       error={failed}
-      running={lifecycle === "queued" || lifecycle === "running"}
+      running={lifecycle === "running"}
       timer={<ToolTimer call={call} result={result} />}
-      expandable
+      expandable={Boolean(result?.content)}
       open={open}
       onToggle={() => setOpen((value) => !value)}
       body={result?.content ? <CommandOutput command={command} content={result.content} /> : undefined}
@@ -893,9 +901,9 @@ function SkillRow({ call, result, streaming }: { call: ToolCall; result?: ToolRe
     <CompactRow
       verb={lifecycleLabel(toolDisplaySpec(call.name), lifecycle)}
       error={lifecycle === "error"}
-      running={streaming && lifecycle !== "completed" && lifecycle !== "error"}
+      running={streaming && lifecycle === "running"}
       timer={<ToolTimer call={call} result={result} />}
-      expandable
+      expandable={Boolean(result?.content)}
       open={open}
       onToggle={() => setOpen((value) => !value)}
       body={result?.content ? <ResultPanel content={result.content} /> : undefined}
@@ -917,7 +925,7 @@ function AgentRow({ call, result, parentChatId }: { call: ToolCall; result?: Too
   const parentReport = useChatStore((s) => (s.messagesByChat[parentChatId] ?? []).find((message) => message.id === `${call.id}-parent-report`));
   const backgroundStarted = result?.content.includes("Started sub-agent in background") ?? false;
   const displayLifecycle = parentReport ? (parentReport.status === "error" ? "error" : "completed") : lifecycle;
-  const active = lifecycle === "running" || lifecycle === "queued" || (backgroundStarted && !parentReport);
+  const active = lifecycle === "running" || (backgroundStarted && !parentReport);
 
   const handleCardClick = () => {
     upsertChat({ id: call.id, title: description, model: parentModel, parentId: parentChatId, type: "subagent", createdAt: Date.now(), updatedAt: Date.now() });
@@ -989,9 +997,9 @@ function GenericRow({ call, result, streaming }: { call: ToolCall; result?: Tool
     <CompactRow
       verb={label}
       error={lifecycle === "error"}
-      running={streaming && (lifecycle === "queued" || lifecycle === "running")}
+      running={streaming && lifecycle === "running"}
       timer={<ToolTimer call={call} result={result} />}
-      expandable
+      expandable={Boolean(result?.content)}
       open={open}
       onToggle={() => setOpen((value) => !value)}
       body={result?.content ? <ResultPanel content={result.content} /> : undefined}

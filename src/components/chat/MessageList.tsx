@@ -11,7 +11,7 @@ function messageRenderSignature(message: Message | undefined): string {
   const blockSig = message.blocks
     .map((block) => {
       if (block.type === "tool_calls") {
-        const calls = block.toolCalls?.length ?? 0;
+        const calls = (block.toolCalls ?? []).map((call) => `${call.id}:${call.name}:${call.arguments.length}`).join("|");
         const results = (block.results ?? []).map((r) => `${r.toolCallId}:${r.status}:${r.content.length}`).join("|");
         return `tools:${calls}:${results}`;
       }
