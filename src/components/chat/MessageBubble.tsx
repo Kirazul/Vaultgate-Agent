@@ -1,5 +1,5 @@
 "use client";
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Check, ChevronRight, Copy, Loader2, RotateCcw, Terminal, MessageCircleQuestion, AlertCircle } from "lucide-react";
 import type { ContentBlock, Message } from "@/types";
 import { Markdown } from "@/components/markdown/Markdown";
@@ -22,6 +22,7 @@ function MessageBubbleImpl({ message, onRegenerate }: { message: Message; onRege
   const [copied, setCopied] = useState(false);
   const [rollingBack, setRollingBack] = useState(false);
   const [workOpen, setWorkOpen] = useState(true);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const streaming = message.status === "streaming";
@@ -37,12 +38,16 @@ function MessageBubbleImpl({ message, onRegenerate }: { message: Message; onRege
 
   useEffect(() => {
     if (streaming) setWorkOpen(true);
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
   }, [streaming]);
 
   const copy = async () => {
     await navigator.clipboard.writeText(message.content);
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
   };
 
   const rollback = async () => {

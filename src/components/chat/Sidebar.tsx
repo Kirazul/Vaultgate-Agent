@@ -1,5 +1,5 @@
 "use client";
-import { Plus, Trash2, PanelLeft, Boxes, Clock, ChevronRight, Folder, FolderOpen, FolderPlus, Search } from "lucide-react";
+import { Plus, Trash2, PanelLeft, Boxes, Clock, ChevronRight, Folder, FolderOpen, FolderPlus, Search, X } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { useChatStore } from "@/lib/store/chat-store";
@@ -193,6 +193,15 @@ export function Sidebar() {
               placeholder="Search sessions"
               className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-[var(--ui-text-quaternary)]"
             />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 transition-colors hover:text-foreground"
+                title="Clear search"
+              >
+                <X className="size-3" />
+              </button>
+            )}
           </label>
         </div>
 
