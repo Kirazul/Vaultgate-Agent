@@ -170,6 +170,7 @@ function OrderedBlocks({
   workspaceChatId: string;
 }) {
   let workSummaryShown = false;
+  const lastBlock = message.blocks[message.blocks.length - 1];
 
   return (
     <>
@@ -185,9 +186,10 @@ function OrderedBlocks({
 
         const showSummary = hasWork && !workSummaryShown;
         workSummaryShown = true;
+        const blockIsReasoning = streaming && lastBlock?.type === "reasoning";
         return (
           <div key={`${block.type}-${i}`} className="flex flex-col gap-[var(--tool-row-gap)] px-[var(--message-indent)]">
-            {showSummary && <WorkSummary open={workOpen} setOpen={setWorkOpen} streaming={streaming} stopped={stopped} durationMs={message.durationMs} createdAt={message.createdAt} />}
+            {showSummary && <WorkSummary open={workOpen} setOpen={setWorkOpen} streaming={streaming} stopped={stopped} durationMs={message.durationMs} createdAt={message.createdAt} isThinking={blockIsReasoning} />}
             {workOpen && (
               <WorkBlock block={block} streaming={streaming} isLast={i === message.blocks.length - 1} chatId={workspaceChatId} />
             )}
@@ -198,9 +200,10 @@ function OrderedBlocks({
   );
 }
 
-function WorkSummary({ open, setOpen, streaming, stopped, durationMs, createdAt }: { open: boolean; setOpen: (open: boolean) => void; streaming: boolean; stopped: boolean; durationMs?: number; createdAt: number }) {
+function WorkSummary({ open, setOpen, streaming, stopped, durationMs, createdAt, isThinking }: { open: boolean; setOpen: (open: boolean) => void; streaming: boolean; stopped: boolean; durationMs?: number; createdAt: number; isThinking: boolean }) {
   const elapsed = useElapsed(streaming, createdAt, durationMs);
-  const label = streaming ? `Working for ${formatElapsed(elapsed)}` : stopped ? `Stopped after ${formatElapsed(elapsed)}` : `Worked for ${formatElapsed(elapsed)}`;
+  const action = isThinking ? "Thinking" : "Working";
+  const label = streaming ? `${action} for ${formatElapsed(elapsed)}` : stopped ? `Stopped after ${formatElapsed(elapsed)}` : `${action.replace(/ing$/, "ed")} for ${formatElapsed(elapsed)}`;
   return (
     <div className="relative">
       <button

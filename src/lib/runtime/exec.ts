@@ -413,8 +413,22 @@ function preflightNextWorkspace(root: string): void {
 export async function workspaceExecute(chatId: string, command: string, options: ExecOptions = {}): Promise<ExecResult> {
   await ensureWorkspace(chatId);
   const root = resolvedRoot(chatId);
-  const commandLocation = detectCommandProjectRoot(command, root);
-  const commandRoot = commandLocation.root;
+  let resolvedCommand = command;
+  let commandLocation = detectCommandProjectRoot(resolvedCommand, root);
+  let commandRoot = commandLocation.root;
+
+  // Package-manager install commands need package.json in the working directory.
+  // If the persisted cwd drifts into a subdirectory that lacks one (e.g. the agent
+  // cd'd to src/), auto-resolve to the nearest ancestor that has package.json.
+  if (isPackageManagerInstall(resolvedCommand) && !hasPackageJson(commandRoot)) {
+    const nearest = nearestPackageJson(commandRoot);
+    if (nearest) {
+      resolvedCommand = prependCd(nearest, resolvedCommand);
+      commandLocation = detectCommandProjectRoot(resolvedCommand, root);
+      commandRoot = commandLocation.root;
+    }
+  }
+
   if (hasPackageJson(commandRoot)) {
     if (!isHostApplicationRoot(commandRoot)) preflightNextWorkspace(commandRoot);
   } else if (!isHostApplicationRoot(root)) {
@@ -438,7 +452,7 @@ export async function workspaceExecute(chatId: string, command: string, options:
   }
 
   // Execute the command normally through the workspace runtime.
-  const res = await executeInWorkspaceRuntime(chatId, root, command, {
+  const res = await executeInWorkspaceRuntime(chatId, root, resolvedCommand, {
     timeout,
     signal: options.signal,
     onOutput: options.onOutput,
@@ -449,4 +463,35 @@ export async function workspaceExecute(chatId: string, command: string, options:
 
 export function workspaceHasDevDir(chatId: string): boolean {
   return existsSync(path.join(resolvedRoot(chatId), "node_modules"));
+}
+
+// ── Package-manager cwd auto-resolution ──────────────────────
+
+function isPackageManagerInstall(command: string): boolean {
+  const patterns = [
+    /\b(npm|pnpm|yarn|bun)\s+(?:install|i|add|ci)\b/,
+    /\b(npm|pnpm|yarn|bun)\s+(?:remove|rm|uninstall|update|upgrade)\b/,
+    /(^|[;&|\n])\s*(?:npm|pnpm|yarn|bun)\s+run\b/,
+  ];
+  return patterns.some((pattern) => pattern.test(command));
+}
+
+function nearestPackageJson(startDir: string): string | null {
+  let dir = path.resolve(/* turbopackIgnore: true */ startDir);
+  const root = path.parse(dir).root;
+  for (let i = 0; i < 20; i++) {
+    if (existsSync(path.join(dir, "package.json"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir || parent === root || parent.length < 3) break;
+    dir = parent;
+  }
+  return null;
+}
+
+function prependCd(targetDir: string, command: string): string {
+  const dir = path.resolve(/* turbopackIgnore: true */ targetDir);
+  if (process.platform === "win32") {
+    return `Set-Location -LiteralPath "${dir}"; ${command}`;
+  }
+  return `cd "${dir}" && ${command}`;
 }
