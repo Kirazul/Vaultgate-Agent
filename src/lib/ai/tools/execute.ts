@@ -133,7 +133,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       case "Delete":
         return runDelete(args, ctx.chatId);
       case "Move":
-        return runMove(args, ctx.chatId);
+        return await runMove(args, ctx.chatId);
       case "Glob":
         return runGlob(args, ctx.chatId);
       case "Grep":
@@ -230,8 +230,14 @@ async function runBash(args: Record<string, unknown>, ctx: ToolContext): Promise
   const danger = detectDangerousCommand(command);
   if (danger) ctx.onOutput?.(`Warning: dangerous operation detected: ${danger}\n`);
 
+  // Render a real-ish prompt in the terminal tab: the actual relative cwd so
+  // the user can see where the command ran. Falls back to the workspace root
+  // when no shell session has been initialised yet.
+  const runtime = readRuntimeStatus(ctx.chatId);
+  const cwdLabel = runtime?.relativeCwd && runtime.relativeCwd !== "." ? `…/${runtime.relativeCwd}` : "…/workspace";
+  const prompt = process.platform === "win32" ? `${cwdLabel}> ` : `${cwdLabel} $ `;
+  ctx.onOutput?.(`${prompt}${command}\n`);
   const artifactSince = Date.now() - 2000;
-  ctx.onOutput?.(`…/workspace > ${command}\n`);
 
   // Agent-browser writes screenshots/artifacts to its output dir. We no longer
   // pre-scaffold that folder at workspace init (keeps the workspace clean), so
@@ -268,6 +274,10 @@ async function runBash(args: Record<string, unknown>, ctx: ToolContext): Promise
     signal: ctx.signal,
     onOutput: (chunk) => ctx.onOutput?.(chunk),
   });
+  // Echo the prompt + exit marker into the terminal stream so the terminal tab
+  // reads as a continuous session — the model-facing body still gets the
+  // bounded output below.
+  ctx.onOutput?.(`(exit ${result.exitCode}${result.timedOut ? ", timed out" : ""})\n`);
   let body = result.stdout;
   if (result.stderr) body += (body ? "\n" : "") + result.stderr;
   // Bound the model-facing output; the Terminal panel kept the full stream.
@@ -275,7 +285,6 @@ async function runBash(args: Record<string, unknown>, ctx: ToolContext): Promise
   if (result.exitCode !== 0) out += (out ? "\n" : "") + `Exit code: ${result.exitCode}`;
   if (result.timedOut) out += "\nCommand timed out";
   if (!body.trim() && result.exitCode !== 0) {
-    const runtime = readRuntimeStatus(ctx.chatId);
     out += `\nCommand failed without stdout/stderr. Shell: ${process.platform === "win32" ? "PowerShell" : "bash"}. Working directory: ${runtime?.relativeCwd || "."}.`;
   }
   const artifacts = commandTouchesAgentBrowser(command) ? syncAgentBrowserArtifacts(ctx.chatId, artifactSince) : "";
@@ -1401,6 +1410,16 @@ function toolPath(chatId: string, filepath: string): string {
   return resolveWorkspacePath(filepath, resolvedRoot(chatId), workspaceMetaRoot(chatId));
 }
 
+/** Like toolPath, but first guarantees the chat's workspace root is resolved
+ *  (project folder when the chat belongs to a project, else the default
+ *  workspace). This closes the "files created elsewhere" race: a mutating tool
+ *  that runs before the sync root cache is warm would otherwise fall back to
+ *  the shared default workspace instead of the active project folder. */
+async function toolPathResolved(chatId: string, filepath: string): Promise<string> {
+  await ensureWorkspace(chatId);
+  return resolveWorkspacePath(filepath, resolvedRoot(chatId), workspaceMetaRoot(chatId));
+}
+
 function commandTouchesAgentBrowser(command: string): boolean {
   return /(^|[\s"'`;&|()])agent-browser(?:\.cmd|\.exe)?(?=$|[\s"'`;&|()])/i.test(command);
 }
@@ -1555,14 +1574,18 @@ function runRead(args: Record<string, unknown>, chatId: string): string {
 
 async function runWrite(args: Record<string, unknown>, chatId: string): Promise<string> {
   const rel = String(args.filepath || "");
-  const full = toolPath(chatId, rel);
-  const stale = existsSync(full) ? checkFileStaleness(chatId, full) : null;
+  const full = await toolPathResolved(chatId, rel);
+  const existed = existsSync(full);
+  const stale = existed ? checkFileStaleness(chatId, full) : null;
   const content = String(args.content ?? "");
   mkdirSync(path.dirname(full), { recursive: true });
   writeFileSync(full, content, "utf-8");
   trackFileRead(chatId, full);
   const prefix = stale ? `${stale}\n\n` : "";
-  return prefix + writtenReport(full, chatId, "File written") + (await diagnosticsSuffix(full, rel, content));
+  // Distinguish create vs overwrite so the UI can label the row correctly
+  // ("Edited" for an existing file, "Created" for a new one).
+  const verb = existed ? "File updated" : "File created";
+  return prefix + writtenReport(full, chatId, verb) + (await diagnosticsSuffix(full, rel, content));
 }
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -1720,7 +1743,7 @@ function applyStringEdit(content: string, oldStr: string, newStr: string, replac
 
 async function runEdit(args: Record<string, unknown>, chatId: string): Promise<string> {
   const rel = String(args.filepath || "");
-  const full = toolPath(chatId, rel);
+  const full = await toolPathResolved(chatId, rel);
   if (!existsSync(full)) return `Error: file not found: ${rel}.${missingFileHint(full)}`;
   const stale = checkFileStaleness(chatId, full);
   const content = readFileSync(full, "utf-8");
@@ -1734,7 +1757,7 @@ async function runEdit(args: Record<string, unknown>, chatId: string): Promise<s
 
 async function runMultiEdit(args: Record<string, unknown>, chatId: string): Promise<string> {
   const rel = String(args.filepath || "");
-  const full = toolPath(chatId, rel);
+  const full = await toolPathResolved(chatId, rel);
   if (!existsSync(full)) return `Error: file not found: ${rel}.${missingFileHint(full)}`;
   const edits = (args.edits as Array<{ old_str: string; new_str: string; replace_all?: boolean }>) || [];
   let content = readFileSync(full, "utf-8");
@@ -1837,6 +1860,7 @@ async function runApplyPatch(args: Record<string, unknown>, chatId: string): Pro
   if ("error" in parsed) return `Error: ${parsed.error}`;
   if (!parsed.ops.length) return "Error: the patch contained no file operations (Update/Add/Delete File).";
 
+  await ensureWorkspace(chatId);
   const root = resolvedRoot(chatId);
   const metaRoot = workspaceMetaRoot(chatId);
   // Stage everything first; only commit to disk if every op validates (atomic).
@@ -1900,10 +1924,11 @@ function runDelete(args: Record<string, unknown>, chatId: string): string {
   return `Deleted ${isDir ? "directory" : "file"}: ${full}`;
 }
 
-function runMove(args: Record<string, unknown>, chatId: string): string {
+async function runMove(args: Record<string, unknown>, chatId: string): Promise<string> {
   const srcRel = String(args.source || "");
   const dstRel = String(args.destination || "");
   if (!srcRel || !dstRel) return "Error: source and destination are required";
+  await ensureWorkspace(chatId);
   const root = resolvedRoot(chatId);
   const metaRoot = workspaceMetaRoot(chatId);
   const from = resolveWorkspacePath(srcRel, root, metaRoot);

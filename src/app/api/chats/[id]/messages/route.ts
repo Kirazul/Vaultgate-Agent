@@ -18,6 +18,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     status: Message["status"];
     model?: string;
     createdAt: number;
+    durationMs?: number;
   };
 
   const message = sanitizeAssistantMessage({
@@ -29,6 +30,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     status: body.status ?? "complete",
     model: body.model,
     createdAt: body.createdAt ?? Date.now(),
+    durationMs: body.durationMs,
   });
   await upsertMessage(message);
 

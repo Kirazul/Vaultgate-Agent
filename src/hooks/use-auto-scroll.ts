@@ -57,6 +57,22 @@ export function useAutoScroll(dep: unknown, { wasStreaming }: { wasStreaming?: b
     if (stickRef.current) pinToBottom("auto");
   }, [dep, pinToBottom]);
 
+  // Keep the view pinned while content grows or the container resizes (e.g. the
+  // workspace panel opening, window resize, late image/diff layout). Without
+  // this, growth after the last token-flush can leave the newest text scrolled
+  // out of view behind the sticky header.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (stickRef.current) pinToBottom("auto");
+    });
+    observer.observe(el);
+    const inner = el.firstElementChild;
+    if (inner) observer.observe(inner);
+    return () => observer.disconnect();
+  }, [pinToBottom]);
+
   // Snap back to bottom when streaming ends — but only if the user was following
   // along. If they scrolled up to read, leave them exactly where they are.
   useEffect(() => {

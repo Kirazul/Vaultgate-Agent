@@ -231,15 +231,16 @@ export function Composer({
   const canSubmit = Boolean((value.trim() || attachments.length > 0) && model && !uploading);
 
   return (
-    <div className="relative mb-2 flex w-full flex-col items-center px-4">
-      <div className="w-full max-w-3xl">
+    <div className="relative flex w-full flex-col items-center px-3 pb-2 pt-1">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[var(--ui-bg-chrome)] to-transparent" />
+      <div className="relative w-full max-w-[var(--composer-width)]">
         <div
           onDragEnter={handleDragOver}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           className={cn(
-            "relative overflow-visible rounded-2xl border border-card-border bg-card p-1 transition-colors focus-within:border-foreground/15 dark:bg-[#141414]/95 dark:focus-within:border-white/20",
+            "relative overflow-visible rounded-[1.15rem] border border-[var(--ui-stroke-secondary)] bg-[color-mix(in_srgb,var(--ui-bg-editor)_94%,transparent)] p-1 text-[length:var(--conversation-text-font-size)] shadow-[var(--shadow-composer)] backdrop-blur transition-colors focus-within:border-[var(--ui-stroke-primary)]",
             dragActive && "border-primary/60 bg-primary/5",
           )}
         >
@@ -296,7 +297,7 @@ export function Composer({
               onFocus={() => window.dispatchEvent(new CustomEvent("vaultgate:composer-focus"))}
               rows={1}
               placeholder={placeholder}
-              className="max-h-[300px] min-h-[52px] rounded-xl px-3 py-2.5 text-sm leading-6 text-foreground placeholder:text-muted-foreground/75"
+              className="max-h-[180px] min-h-[38px] rounded-[0.9rem] px-3 py-2 text-[length:var(--conversation-text-font-size)] leading-5 text-foreground placeholder:text-[var(--ui-text-quaternary)]"
             />
           </div>
 
@@ -314,13 +315,13 @@ export function Composer({
             />
           )}
 
-          <div className="flex w-full flex-wrap items-center justify-between gap-1.5 p-0.5">
+          <div className="flex w-full flex-wrap items-center justify-between gap-1.5 p-0.5 pt-1">
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
               <button
                 type="button"
                 onClick={pickFiles}
                 disabled={!canAttachFiles}
-                className="flex size-7 items-center justify-center rounded-lg text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                  className="flex size-7 items-center justify-center rounded-md text-[var(--ui-text-tertiary)] transition-colors hover:bg-[var(--ui-control-hover-background)] hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
                 title="Add context — attach files to this chat workspace"
               >
                 {uploading ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
@@ -356,7 +357,7 @@ export function Composer({
                   </button>
                   <button
                     onClick={onStop}
-                    className="flex size-8 items-center justify-center rounded-full bg-secondary text-foreground transition hover:bg-muted"
+                    className="flex size-8 items-center justify-center rounded-full bg-[var(--ui-control-hover-background)] text-foreground transition hover:bg-muted"
                     title={queued.length > 0 ? "Stop current turn; queued messages will continue" : "Stop"}
                   >
                     <Square className="size-3.5 fill-current" />
@@ -394,14 +395,14 @@ function SlashPalette({ commands, onPick }: { commands: SlashCommandDef[]; onPic
   }, {});
 
   return (
-    <div className="mx-1 mb-1 overflow-hidden rounded-xl border border-primary/20 bg-background/95 shadow-xl shadow-black/10 backdrop-blur">
-      <div className="border-b border-border/70 px-3 py-2 text-xs font-semibold text-primary">Slash commands</div>
+    <div className="mx-1 mb-1 overflow-hidden rounded-xl border border-[var(--ui-stroke-tertiary)] bg-[var(--ui-bg-elevated)] shadow-[var(--shadow-nous)] backdrop-blur">
+      <div className="border-b border-[var(--ui-stroke-tertiary)] px-3 py-2 text-xs font-semibold text-primary">Slash commands</div>
       <div className="max-h-72 overflow-y-auto p-1">
         {Object.entries(grouped).map(([category, items]) => (
           <div key={category} className="py-1">
             <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{category}</div>
             {items.map((command) => (
-              <button key={command.name} type="button" onClick={() => onPick(command)} className="flex w-full min-w-0 items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted">
+              <button key={command.name} type="button" onClick={() => onPick(command)} className="flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--ui-row-hover-background)]">
                 <span className="w-36 shrink-0 font-mono text-xs text-foreground">{formatSlashCommand(command)}</span>
                 <span className="min-w-0 flex-1 text-xs text-muted-foreground">{command.description}</span>
               </button>
@@ -415,11 +416,11 @@ function SlashPalette({ commands, onPick }: { commands: SlashCommandDef[]; onPic
 
 function FileMentionPalette({ files, onPick }: { files: FileMentionSuggestion[]; onPick: (file: FileMentionSuggestion) => void }) {
   return (
-    <div className="mx-1 mb-1 overflow-hidden rounded-xl border border-primary/20 bg-background/95 shadow-xl shadow-black/10 backdrop-blur">
-      <div className="border-b border-border/70 px-3 py-2 text-xs font-semibold text-primary">Workspace paths</div>
+    <div className="mx-1 mb-1 overflow-hidden rounded-xl border border-[var(--ui-stroke-tertiary)] bg-[var(--ui-bg-elevated)] shadow-[var(--shadow-nous)] backdrop-blur">
+      <div className="border-b border-[var(--ui-stroke-tertiary)] px-3 py-2 text-xs font-semibold text-primary">Workspace paths</div>
       <div className="max-h-72 overflow-y-auto p-1">
         {files.map((file) => (
-          <button key={`${file.type}:${file.path}`} type="button" onClick={() => onPick(file)} className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted">
+          <button key={`${file.type}:${file.path}`} type="button" onClick={() => onPick(file)} className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--ui-row-hover-background)]">
             {file.type === "directory" ? <Folder className="size-4 shrink-0 text-primary" /> : <FileText className="size-4 shrink-0 text-muted-foreground" />}
             <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">{file.path}{file.type === "directory" ? "/" : ""}</span>
             {file.size !== undefined && <span className="shrink-0 text-[10px] text-muted-foreground">{formatBytes(file.size)}</span>}
@@ -457,8 +458,8 @@ function QueuedMessages({
   const hidden = queued.length - shown.length;
 
   return (
-    <div className="m-1 overflow-hidden rounded-xl border border-primary/20 bg-primary/5">
-      <div className="flex items-center gap-2 border-b border-primary/10 px-3 py-2">
+    <div className="m-1 overflow-hidden rounded-xl border border-[var(--ui-stroke-tertiary)] bg-[var(--ui-bg-card)]">
+      <div className="flex items-center gap-2 border-b border-[var(--ui-stroke-tertiary)] px-3 py-2">
         <span className="text-xs font-semibold text-primary">Queued {queued.length}</span>
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           {isStreaming ? "Sends after the current turn. Stop keeps the queue." : "Ready to send next."}
@@ -467,7 +468,7 @@ function QueuedMessages({
           Clear
         </button>
       </div>
-      <div className="divide-y divide-primary/10">
+      <div className="divide-y divide-[var(--ui-stroke-tertiary)]">
         {shown.map((item, index) => (
           <div key={item.id} className="flex min-w-0 items-center gap-2 px-3 py-2">
             <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-background text-[11px] font-medium text-muted-foreground">{index + 1}</span>
@@ -527,10 +528,10 @@ function FeatureToggle({
       onClick={onClick}
       title={title}
       className={cn(
-        "flex h-7 items-center rounded-lg px-2 text-xs font-medium transition-colors",
+        "flex h-7 items-center rounded-md px-2 text-xs font-medium transition-colors",
         active
           ? "bg-primary/15 text-primary hover:bg-primary/20"
-          : "text-secondary-foreground hover:bg-secondary hover:text-foreground",
+          : "text-[var(--ui-text-secondary)] hover:bg-[var(--ui-control-hover-background)] hover:text-foreground",
       )}
     >
       {label}

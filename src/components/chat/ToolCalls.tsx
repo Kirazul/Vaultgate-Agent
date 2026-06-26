@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Bot,
   Check,
@@ -14,12 +14,12 @@ import {
   Sparkles,
   Wand2,
   AlertTriangle,
-  CheckCircle2,
 } from "lucide-react";
 import type { ContentBlock, Message, ToolCall, ToolResult } from "@/types";
 import {
   baseName,
   collectFileDiffs,
+  collectPatchDiffs,
   countExploredItems,
   diffStats,
   lineDiff,
@@ -58,7 +58,7 @@ function ToolTimer({ call, result }: { call: ToolCall; result?: ToolResult }) {
   const active = lifecycle === "queued" || lifecycle === "running";
   const ms = useElapsed(active, call.startedAt, result?.durationMs);
   if (!active && !result?.durationMs) return null;
-  return <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{formatElapsed(ms)}</span>;
+  return <span className="shrink-0 font-mono text-[0.625rem] tabular-nums text-[var(--ui-text-quaternary)]">{formatElapsed(ms)}</span>;
 }
 
 export function ToolCalls({ block, streaming, chatId }: { block: ContentBlock; streaming: boolean; isLast: boolean; chatId: string }) {
@@ -68,7 +68,7 @@ export function ToolCalls({ block, streaming, chatId }: { block: ContentBlock; s
   const rows = contiguousToolRows(calls);
 
   return (
-    <div className="flex flex-col text-sm">
+    <div className="flex flex-col gap-[var(--tool-row-gap)] text-[length:var(--conversation-tool-font-size)]">
       {rows.map((row) => row.kind === "research" ? (
         <ExploredGroup key={row.calls.map((call) => call.id).join(":")} calls={row.calls} results={results} active={streaming} />
       ) : (
@@ -129,24 +129,23 @@ export function FileChangeSummary({ diffs, chatId }: { diffs: FileDiffEntry[]; c
     <div className="my-1 flex w-full select-none flex-col">
       <div
         onClick={openReview}
-        className="files-changed-header flex cursor-pointer flex-wrap items-center justify-between gap-1 rounded-xl border p-2 pl-3 text-sm transition-colors duration-200 hover:bg-muted active:bg-secondary/80"
+        className="flex cursor-pointer flex-wrap items-center justify-between gap-1 rounded-md border border-[var(--ui-stroke-tertiary)] px-3 py-2 text-[length:var(--conversation-tool-font-size)] transition-colors duration-150 hover:bg-[var(--ui-row-hover-background)]"
       >
         <div className="flex items-center gap-1.5 overflow-hidden">
-          <span className="truncate text-secondary-foreground">
+          <span className="truncate text-[var(--ui-text-secondary)]">
             {diffs.length} file{diffs.length === 1 ? "" : "s"} changed
           </span>
-          <div className="flex items-center gap-0.5 text-sm tabular-nums">
-            <span className="text-green-500">+{totalAdded}</span>
-            {totalRemoved > 0 && <span className="text-red-500">-{totalRemoved}</span>}
+          <div className="flex items-center gap-1 font-mono text-[0.625rem] tabular-nums">
+            <span className="text-emerald-600 dark:text-emerald-400">+{totalAdded}</span>
+            {totalRemoved > 0 && <span className="text-rose-600 dark:text-rose-400">−{totalRemoved}</span>}
           </div>
-          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
         </div>
         <button
           onClick={(e) => {
             e.stopPropagation();
             openReview();
           }}
-          className="review-button flex shrink-0 cursor-pointer select-none items-center gap-1 rounded-md border bg-muted px-1.5 py-0.5 text-sm text-secondary-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          className="flex shrink-0 cursor-pointer select-none items-center gap-1 rounded-md border border-[var(--ui-stroke-tertiary)] px-1.5 py-0.5 text-[var(--ui-text-secondary)] transition-colors hover:bg-[var(--ui-control-hover-background)] hover:text-foreground"
         >
           <ReviewIcon className="size-3.5 opacity-70" />
           <span>Review</span>
@@ -169,7 +168,7 @@ function ToolRow({ call, result, streaming, chatId }: { call: ToolCall; result?:
   if (name === "switchmode") return <SwitchModeRow call={call} />;
   if (name === "todowrite") return <TodoRow call={call} />;
   if (name === "bash") return <TerminalRow call={call} result={result} />;
-  if (["write", "edit", "multiedit"].includes(name)) return <EditRow call={call} result={result} streaming={streaming} chatId={chatId} />;
+  if (["write", "edit", "multiedit", "applypatch", "delete", "move"].includes(name)) return <EditRow call={call} result={result} streaming={streaming} chatId={chatId} />;
   if (name === "task") return <AgentRow call={call} result={result} parentChatId={chatId} />;
   if (name === "skill") return <SkillRow call={call} result={result} streaming={streaming} />;
   return <GenericRow call={call} result={result} streaming={streaming} />;
@@ -231,7 +230,6 @@ function CompactRow({
   verb,
   error,
   running,
-  finished,
   timer,
   trailing,
   expandable,
@@ -244,7 +242,6 @@ function CompactRow({
   verb: React.ReactNode;
   error?: boolean;
   running?: boolean;
-  finished?: boolean;
   timer?: React.ReactNode;
   trailing?: React.ReactNode;
   expandable?: boolean;
@@ -255,64 +252,71 @@ function CompactRow({
   body?: React.ReactNode;
 }) {
   const clickable = Boolean(onClick) || (expandable && Boolean(onToggle));
-  const [flash, setFlash] = useState<"success" | "error" | null>(null);
-  const prevFinished = useRef(false);
 
-  useEffect(() => {
-    if (finished && !prevFinished.current) {
-      setFlash(error ? "error" : "success");
-      const t = setTimeout(() => setFlash(null), 1800);
-      return () => clearTimeout(t);
-    }
-    prevFinished.current = Boolean(finished);
-  }, [finished, error]);
+  // Status glyph precedence (mirrors Hermes): a live spinner while running,
+  // an alert on error, and SILENT success — a completed row reads as "done"
+  // by simply no longer spinning, not by stacking a green checkmark. This is
+  // what keeps a long run from looking like a wall of badges.
+  const glyph = running ? (
+    <Loader2 className="size-3 shrink-0 animate-spin text-[var(--ui-text-tertiary)]" />
+  ) : error ? (
+    <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
+  ) : null;
 
   return (
-    <div className="flex flex-col pt-px pb-0.5 gap-1 w-full">
-      <div
-        onClick={onClick ?? (expandable ? onToggle : undefined)}
-        className={cn(
-            "border p-2 rounded-xl flex flex-col gap-1 items-start select-none artifact-card group w-full min-w-0 overflow-hidden",
-          "transition-[border-color,box-shadow] duration-500 ease-out",
-          clickable && "cursor-pointer hover:bg-muted/50",
-          flash === "success" && "border-emerald-500/50 shadow-[0_0_12px_-2px_rgba(16,185,129,0.25)]",
-          flash === "error" && "border-red-500/50 shadow-[0_0_12px_-2px_rgba(239,68,68,0.25)]",
-          !flash && finished && !error && "border-emerald-500/20",
-          !flash && finished && error && "border-red-500/20",
-        )}
-      >
-        <div className="flex w-full items-center justify-between min-w-0">
-          <span className="appearance-none bg-transparent border-0 p-0 inline-flex min-w-0 flex-1 items-center gap-1 rounded-md align-middle text-sm font-medium transition-[opacity,background-color] select-none -translate-x-px pointer-events-none" style={{ padding: "1px 0.25rem 1px 0.125rem" }}>
-            {finished && !running ? (
-              error ? (
-                <span className="inline-flex shrink-0 items-center text-red-400"><AlertTriangle className="size-3.5" /></span>
-              ) : (
-                <span className="inline-flex shrink-0 items-center text-emerald-500"><CheckCircle2 className="size-3.5" /></span>
-              )
-            ) : (
-              <span className={cn("inline-flex items-center shrink-0", error ? "text-destructive" : "text-secondary-foreground")}>{verb}</span>
-            )}
-            <span className="inline-flex min-w-0 items-center gap-1 break-words leading-tight select-text">
-              {children}
-            </span>
+    <div className={cn("min-w-0 max-w-full overflow-hidden", open && "rounded-md border border-[var(--ui-stroke-tertiary)]")}>
+      <div className={cn("flex w-full items-center", open && "border-b border-[var(--ui-stroke-tertiary)] px-2 py-1.5")}>
+        {/* Not a <button> on purpose: the row's children may contain interactive
+            chips (FileChip, FolderChip), and a <button> inside a <button> is
+            invalid HTML (hydration error). A keyboard-accessible div with the
+            right role + key handling is the correct primitive here. */}
+        <div
+          role={clickable ? "button" : undefined}
+          tabIndex={clickable ? 0 : undefined}
+          aria-disabled={clickable ? undefined : true}
+          aria-expanded={expandable ? Boolean(open) : undefined}
+          onClick={clickable ? (onClick ?? onToggle) : undefined}
+          onKeyDown={
+            clickable
+              ? (event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    (onClick ?? onToggle)?.();
+                  }
+                }
+              : undefined
+          }
+          className={cn(
+            "group/row flex min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-[length:var(--conversation-tool-font-size)] transition-colors outline-none focus-visible:ring-1 focus-visible:ring-[var(--ui-stroke-primary)]",
+            clickable ? "cursor-pointer hover:text-foreground" : "cursor-default",
+          )}
+        >
+          {glyph}
+          <span className={cn("inline-flex shrink-0 items-center font-medium", error ? "text-destructive" : "text-[var(--ui-text-secondary)]")}>{verb}</span>
+          <span className="inline-flex min-w-0 items-center gap-1 truncate leading-tight text-[var(--ui-text-secondary)]">
+            {children}
           </span>
-
-          <div className="flex shrink-0 items-center gap-2">
-            {running && <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />}
-            {timer}
-            {trailing}
-            {expandable && (
-              <ChevronRight className={cn("ml-1 size-3.5 shrink-0 text-muted-foreground transition-all duration-200 group-hover:text-secondary-foreground", open && "rotate-90 text-secondary-foreground")} />
-            )}
-          </div>
+          {expandable && (
+            <ChevronRight
+              className={cn(
+                "size-3 shrink-0 text-[var(--ui-text-quaternary)] transition-all duration-150",
+                open ? "rotate-90 text-[var(--ui-text-tertiary)] opacity-80" : "opacity-0 group-hover/row:opacity-80",
+              )}
+            />
+          )}
         </div>
 
-        {expandable && open && body && (
-          <div className="mt-1 w-full min-w-0 overflow-hidden">
-            <div className="w-full min-w-0 animate-fade-in">{body}</div>
-          </div>
-        )}
+        <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
+          {timer}
+          {trailing}
+        </div>
       </div>
+
+      {expandable && open && body && (
+        <div className="w-full min-w-0 overflow-hidden p-1.5">
+          <div className="w-full min-w-0 animate-fade-in">{body}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -337,17 +341,17 @@ function ExploredGroup({ calls, results, active }: { calls: ToolCall[]; results:
   const itemLabel = webOnly ? "the web" : singleFolderPath ? `folder ${singleFolderPath}` : parts.length > 0 ? parts.join(", ") : `${calls.length} item${calls.length === 1 ? "" : "s"}`;
 
   return (
-    <div className="relative">
+    <div className="min-w-0 max-w-full overflow-hidden">
       <button
         onClick={() => setOpen((value) => !value)}
         title="VaultGate read files and web pages to understand your request. Click to see what it looked at."
-        className="group flex min-h-8 w-full select-none items-center gap-1 rounded-lg px-2 py-1 text-left text-sm tabular-nums text-foreground transition-colors hover:bg-muted"
+        className="group/row flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-[length:var(--conversation-tool-font-size)] tabular-nums transition-colors hover:text-foreground"
       >
-        <span className={cn(failed ? "text-destructive" : "text-secondary-foreground")}>{verbLabel}</span>
-        <span className="truncate">{itemLabel}</span>
-        {running && <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />}
+        {running && <Loader2 className="size-3 shrink-0 animate-spin text-[var(--ui-text-tertiary)]" />}
         {failed && <AlertTriangle className="size-3.5 shrink-0 text-destructive" />}
-        <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-all duration-200 group-hover:text-secondary-foreground", open && "rotate-90 text-secondary-foreground")} />
+        <span className={cn("shrink-0 font-medium", failed ? "text-destructive" : "text-[var(--ui-text-secondary)]")}>{verbLabel}</span>
+        <span className="truncate text-[var(--ui-text-secondary)]">{itemLabel}</span>
+        <ChevronRight className={cn("size-3 shrink-0 text-[var(--ui-text-quaternary)] transition-all duration-150", open ? "rotate-90 text-[var(--ui-text-tertiary)] opacity-80" : "opacity-0 group-hover/row:opacity-80")} />
       </button>
       {open && (
         <div className="overflow-hidden pl-3">
@@ -360,19 +364,19 @@ function ExploredGroup({ calls, results, active }: { calls: ToolCall[]; results:
               const preview = recallResultPreview(call, result) || (result?.status === "error" ? resultPreview(result.content, 180) : "");
               return (
                 <div key={call.id} className="flex flex-col gap-0.5">
-                  <div className="flex min-h-7 items-center gap-1.5 px-2 text-sm text-secondary-foreground">
+                  <div className="flex min-h-6 items-center gap-1.5 px-1 text-[length:var(--conversation-tool-font-size)] text-[var(--ui-text-secondary)]">
                     {lifecycle === "error" ? (
                       <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
                     ) : lifecycle === "running" || lifecycle === "queued" ? (
-                      <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />
+                      <Loader2 className="size-3 shrink-0 animate-spin text-[var(--ui-text-tertiary)]" />
                     ) : (
-                      <Check className="size-3.5 shrink-0 text-green-500/70" />
+                      <span className="size-1 shrink-0 rounded-full bg-[var(--ui-text-quaternary)]" />
                     )}
-                    <span className="shrink-0">{lifecycleLabel(toolDisplaySpec(call.name), lifecycle)}</span>
-                    {normalizeToolName(call.name) === "ls" && fp ? <FolderChip path={fp} /> : fp ? <FileChip path={fp} /> : <span className="truncate text-foreground/90">{summarizeTool(call.name, call.arguments)}</span>}
-                    {lines ? <span className="text-muted-foreground">#L1-{lines}</span> : null}
+                    <span className="shrink-0 text-[var(--ui-text-tertiary)]">{lifecycleLabel(toolDisplaySpec(call.name), lifecycle)}</span>
+                    {normalizeToolName(call.name) === "ls" && fp ? <FolderChip path={fp} /> : fp ? <FileChip path={fp} /> : <span className="truncate text-[var(--ui-text-secondary)]">{summarizeTool(call.name, call.arguments)}</span>}
+                    {lines ? <span className="text-[var(--ui-text-quaternary)]">#L1-{lines}</span> : null}
                   </div>
-                  {preview && <div className={cn("px-2 pl-7 text-xs", lifecycle === "error" ? "text-destructive" : "text-muted-foreground")}>{preview}</div>}
+                  {preview && <div className={cn("px-1 pl-6 text-[0.7rem]", lifecycle === "error" ? "text-destructive" : "text-[var(--ui-text-tertiary)]")}>{preview}</div>}
                 </div>
               );
             })}
@@ -473,7 +477,7 @@ function countLines(value: string): number {
 }
 
 function liveFilePath(args: string): string {
-  return findStringField(args, ["filepath", "file_path", "path", "relativePath"]);
+  return findStringField(args, ["filepath", "file_path", "path", "relativePath", "source", "destination"]);
 }
 
 function writtenContent(name: string, args: string): string {
@@ -504,6 +508,13 @@ function liveDiffStats(name: string, args: string): { added: number; removed: nu
       removed: findStringFields(args, "old_str").reduce((sum, value) => sum + countLines(value), 0),
     };
   }
+  if (n === "applypatch") {
+    const a = parseJsonLoose(args) || {};
+    return collectPatchDiffs(String(a.patch || a.input || "")).reduce(
+      (total, diff) => ({ added: total.added + diff.stats.added, removed: total.removed + diff.stats.removed }),
+      { added: 0, removed: 0 },
+    );
+  }
   return { added: 0, removed: 0 };
 }
 
@@ -513,6 +524,11 @@ function EditRow({ call, result, streaming, chatId }: { call: ToolCall; result?:
   const stats = diffStats(call.name, call.arguments) ?? liveStats;
   const lifecycle = toolLifecycle(result);
   const label = lifecycleLabel(toolDisplaySpec(call.name), lifecycle);
+  // A Write that overwrote an existing file should read as an edit, not a
+  // create. The server reports "File updated" vs "File created"; fall back to
+  // the static spec label when there's no result yet.
+  const writeOverwrote = normalizeToolName(call.name) === "write" && /file updated/i.test(result?.content ?? "");
+  const resolvedLabel = writeOverwrote ? (lifecycle === "error" ? "Edit failed" : "Edited") : label;
 
   // Start in writing mode only for active streams — initialised from the prop
   // so even if the result arrives in the same React batch as the tool call,
@@ -548,7 +564,7 @@ function EditRow({ call, result, streaming, chatId }: { call: ToolCall; result?:
     window.setTimeout(emit, 50);
   };
 
-  return <EditedRow call={call} result={result} fp={fp} label={label} stats={stats} liveStats={liveStats} lifecycle={lifecycle} openFile={openFile} writing={writing} toolName={normalizeToolName(call.name)} />;
+  return <EditedRow call={call} result={result} fp={fp} label={resolvedLabel} stats={stats} liveStats={liveStats} lifecycle={lifecycle} openFile={openFile} writing={writing} toolName={normalizeToolName(call.name)} writeOverwrote={writeOverwrote} />;
 }
 
 function EditedRow({
@@ -562,6 +578,7 @@ function EditedRow({
   openFile,
   writing,
   toolName,
+  writeOverwrote,
 }: {
   call: ToolCall;
   result?: ToolResult;
@@ -573,6 +590,7 @@ function EditedRow({
   openFile: () => void;
   writing: boolean;
   toolName: string;
+  writeOverwrote: boolean;
 }) {
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -581,15 +599,27 @@ function EditedRow({
 
   const isError = lifecycle === "error";
   const body = isError && result?.content ? <ResultPanel content={result.content} /> : <DiffView call={call} />;
-  const writingVerb = toolName === "write" ? "Creating" : "Editing";
+  const writingVerb = toolName === "write" ? (writeOverwrote ? "Editing" : "Creating") : toolName === "applypatch" ? "Applying patch" : toolName === "delete" ? "Deleting" : toolName === "move" ? "Moving" : "Editing";
+  const verbClass = !writing
+    ? undefined
+    : toolName === "write" && !writeOverwrote
+      ? "text-emerald-600 dark:text-emerald-400"
+      : toolName === "write" || toolName === "edit" || toolName === "multiedit"
+        ? "text-sky-600 dark:text-sky-400"
+        : toolName === "applypatch"
+          ? "text-violet-600 dark:text-violet-400"
+          : toolName === "delete"
+            ? "text-destructive"
+            : toolName === "move"
+              ? "text-amber-600 dark:text-amber-400"
+              : undefined;
   const liveLines = liveStats.added;
 
   return (
     <CompactRow
-      verb={writing ? writingVerb : label}
+      verb={writing ? <span className={verbClass}>{writingVerb}</span> : label}
       error={isError}
       running={writing}
-      finished={!writing && (lifecycle === "completed" || lifecycle === "error")}
       timer={<ToolTimer call={call} result={result} />}
       expandable={!writing}
       open={!writing && open}
@@ -610,11 +640,41 @@ function EditedRow({
       }
       body={body}
     >
-      {fp ? <FileChip path={fp} onClick={openFile} /> : <span className="truncate text-foreground/90">file</span>}
-      {writing && liveLines > 0 ? (
-        <span className="shrink-0 tabular-nums font-mono text-xs text-green-500/80">+{liveLines}</span>
+      {fp ? (
+        <FileChip path={fp} onClick={openFile} />
       ) : (
-        <StatPair stats={writing ? null : stats} showZero={!writing} />
+        <span className="truncate font-mono text-[length:var(--conversation-tool-font-size)] italic text-[var(--ui-text-tertiary)]">
+          {writing ? "untitled" : "(no file)"}
+        </span>
+      )}
+      {writing ? (
+        <span className="ml-1 inline-flex shrink-0 items-center gap-1 font-mono text-[0.7rem] tabular-nums">
+          {liveLines > 0 && (
+            <span
+              className={cn(
+                "transition-colors",
+                toolName === "write" && "text-emerald-500 dark:text-emerald-400",
+                toolName === "edit" || toolName === "multiedit" ? "text-sky-500 dark:text-sky-400" : "",
+                toolName === "applypatch" && "text-violet-500 dark:text-violet-400",
+              )}
+            >
+              +{liveLines}
+            </span>
+          )}
+          <span
+            aria-hidden
+            className={cn(
+              "live-caret",
+              toolName === "write" && "live-caret-create",
+              (toolName === "edit" || toolName === "multiedit") && "live-caret-edit",
+              toolName === "applypatch" && "live-caret-patch",
+              toolName === "delete" && "live-caret-delete",
+              toolName === "move" && "live-caret-move",
+            )}
+          />
+        </span>
+      ) : (
+        <StatPair stats={stats} showZero />
       )}
     </CompactRow>
   );
@@ -628,15 +688,17 @@ function DiffView({ call }: { call: ToolCall }) {
   else if (name === "edit") hunks.push({ old: String(a.old_str ?? ""), next: String(a.new_str ?? "") });
   else if (name === "multiedit") {
     for (const e of Array.isArray(a.edits) ? (a.edits as Array<Record<string, unknown>>) : []) hunks.push({ old: String(e?.old_str ?? ""), next: String(e?.new_str ?? "") });
+  } else if (name === "applypatch") {
+    for (const entry of collectPatchDiffs(String(a.patch || a.input || ""))) hunks.push(...entry.hunks);
   }
   if (hunks.length === 0 || hunks.every((h) => !h.old && !h.next)) return null;
 
   return (
-    <div className="mt-0.5 min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-sm">
-      <div className="border-b border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground">{name === "write" ? "new file" : `${hunks.length} change${hunks.length > 1 ? "s" : ""}`}</div>
-      <div className="max-h-80 min-w-0 overflow-auto py-1 font-mono text-[11.5px] leading-relaxed text-foreground/90">
+    <div className="min-w-0 overflow-hidden rounded-md border border-[var(--ui-stroke-tertiary)] bg-transparent">
+      <div className="border-b border-[var(--ui-stroke-tertiary)] px-2.5 py-1 font-mono text-[0.65rem] uppercase tracking-[0.08em] text-[var(--ui-text-tertiary)]">{name === "write" ? "new file" : `${hunks.length} change${hunks.length > 1 ? "s" : ""}`}</div>
+      <div className="max-h-80 min-w-0 overflow-auto py-1 font-mono text-[11.5px] leading-relaxed text-[var(--ui-text-secondary)]">
         {hunks.map((h, hi) => (
-          <div key={hi} className={hi > 0 ? "mt-1 border-t border-border/40 pt-1" : ""}>
+          <div key={hi} className={hi > 0 ? "mt-1 border-t border-[var(--ui-stroke-quaternary)] pt-1" : ""}>
             <DiffHunk rows={collapseContext(lineDiff(h.old, h.next))} />
           </div>
         ))}
@@ -726,7 +788,6 @@ function TerminalRow({ call, result }: { call: ToolCall; result?: ToolResult }) 
       verb={label}
       error={failed}
       running={lifecycle === "queued" || lifecycle === "running"}
-      finished={lifecycle === "completed" || lifecycle === "error"}
       timer={<ToolTimer call={call} result={result} />}
       expandable
       open={open}
@@ -734,7 +795,7 @@ function TerminalRow({ call, result }: { call: ToolCall; result?: ToolResult }) 
       body={result?.content ? <CommandOutput command={command} content={result.content} /> : undefined}
     >
       <span className="inline-flex min-w-0 max-w-full">
-        <span className="truncate font-mono text-[13px]">{command}</span>
+        <span className="truncate font-mono text-[0.75rem]">{command}</span>
       </span>
     </CompactRow>
   );
@@ -743,20 +804,18 @@ function TerminalRow({ call, result }: { call: ToolCall; result?: ToolResult }) 
 function CommandOutput({ command, content }: { command: string; content: string }) {
   const appServer = extractAppServerInfo(content);
   return (
-    <div className="mt-0.5 flex min-w-0 flex-col gap-2">
+    <div className="flex min-w-0 flex-col gap-2">
       {appServer && <AppServerCard info={appServer} />}
-      <div className="mt-0.5 flex min-w-0 max-w-full flex-col overflow-hidden rounded-lg border border-border bg-background shadow-sm">
-        <div className="flex min-w-0 grow items-start justify-between px-2 py-1">
-          <pre className="max-h-[120px] min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-all font-mono text-sm">
-            <span className="text-muted-foreground">…/workspace</span>
-            <span className="text-muted-foreground"> &gt; </span>
+      <div className="flex min-w-0 max-w-full flex-col overflow-hidden rounded-md border border-[var(--ui-stroke-tertiary)] bg-transparent">
+        <div className="flex min-w-0 grow items-start justify-between border-b border-[var(--ui-stroke-tertiary)] px-2.5 py-1">
+          <pre className="max-h-[120px] min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[0.7rem] leading-relaxed text-[var(--ui-text-secondary)]">
+            <span className="text-[var(--ui-text-quaternary)]">…/workspace</span>
+            <span className="text-[var(--ui-text-quaternary)]"> &gt; </span>
             {command}
           </pre>
         </div>
-        <div className="border-t border-border pt-1">
-          <div className="max-h-[260px] min-w-0 overflow-auto px-2 py-1">
-            <TerminalOutput chunks={[stripAnsi(content)]} compact />
-          </div>
+        <div className="max-h-[260px] min-w-0 overflow-auto px-2.5 py-1">
+          <TerminalOutput chunks={[stripAnsi(content)]} compact />
         </div>
       </div>
     </div>
@@ -875,34 +934,34 @@ function AgentRow({ call, result, parentChatId }: { call: ToolCall; result?: Too
   };
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-1 pt-px pb-0.5">
+    <div className="flex w-full min-w-0 flex-col">
       <div
         onClick={handleCardClick}
-        className="border p-2 rounded-xl transition-colors flex flex-col gap-1 items-start select-none cursor-pointer artifact-card group w-full min-w-0 overflow-hidden hover:bg-muted/50"
+        className="group flex w-full min-w-0 cursor-pointer select-none flex-col gap-1 overflow-hidden rounded-md border border-[var(--ui-stroke-tertiary)] bg-transparent px-2.5 py-1.5 transition-colors hover:bg-[var(--ui-row-hover-background)]"
       >
-        <div className="flex w-full items-center justify-between min-w-0">
-          <button className="appearance-none bg-transparent border-0 p-0 inline-flex min-w-0 flex-1 items-center gap-1 rounded-md align-middle text-sm font-medium transition-[opacity,background-color] select-none -translate-x-px pointer-events-none" style={{ padding: "1px 0.25rem 1px 0.125rem" }}>
-            <span className={cn("inline-flex items-center shrink-0", displayLifecycle === "error" ? "text-destructive" : "text-secondary-foreground")}>
+        <div className="flex w-full min-w-0 items-center justify-between">
+          <span className="inline-flex min-w-0 flex-1 items-center gap-1.5 text-[length:var(--conversation-tool-font-size)] font-medium">
+            <span className={cn("inline-flex shrink-0 items-center", displayLifecycle === "error" ? "text-destructive" : "text-[var(--ui-text-secondary)]")}>
               {active ? (
-                <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
+                <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
               ) : displayLifecycle === "error" ? (
-                <AlertTriangle className="size-4 shrink-0 text-destructive" />
+                <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
               ) : (
-                <CheckCircle2 className="size-4 shrink-0 opacity-50" />
+                <Bot className="size-3.5 shrink-0 text-[var(--ui-text-tertiary)]" />
               )}
             </span>
-            <span className="inline-flex min-w-0 items-center gap-1 break-words leading-tight select-text">
+            <span className="inline-flex min-w-0 items-center gap-1 truncate leading-tight text-[var(--ui-text-secondary)]">
               {description}
             </span>
-          </button>
-          
-          <div className="flex items-center gap-2 shrink-0">
+          </span>
+
+          <div className="flex shrink-0 items-center gap-2">
             <ToolTimer call={call} result={result} />
-            <Bot className="size-3.5 shrink-0 text-primary opacity-70" />
+            <ChevronRight className="size-3 shrink-0 text-[var(--ui-text-quaternary)] transition-colors group-hover:text-[var(--ui-text-tertiary)]" />
           </div>
         </div>
-        <div className="min-w-0 pl-[6px]">
-          <span className="block truncate text-xs text-muted-foreground">{getSubTitle()}</span>
+        <div className="min-w-0 pl-5">
+          <span className="block truncate text-[0.7rem] text-[var(--ui-text-tertiary)]">{getSubTitle()}</span>
         </div>
       </div>
     </div>
@@ -931,7 +990,6 @@ function GenericRow({ call, result, streaming }: { call: ToolCall; result?: Tool
       verb={label}
       error={lifecycle === "error"}
       running={streaming && (lifecycle === "queued" || lifecycle === "running")}
-      finished={lifecycle === "completed" || lifecycle === "error"}
       timer={<ToolTimer call={call} result={result} />}
       expandable
       open={open}
@@ -945,9 +1003,9 @@ function GenericRow({ call, result, streaming }: { call: ToolCall; result?: Tool
 
 function ResultPanel({ content }: { content: string }) {
   return (
-    <div className="mt-0.5 min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-sm">
-      <div className="border-b border-border px-2 py-1 font-mono text-[11px] text-muted-foreground">tool result</div>
-      <div className="max-h-[260px] min-w-0 overflow-auto px-2 py-1">
+    <div className="min-w-0 overflow-hidden rounded-md border border-[var(--ui-stroke-tertiary)] bg-transparent">
+      <div className="border-b border-[var(--ui-stroke-tertiary)] px-2.5 py-1 font-mono text-[0.65rem] uppercase tracking-[0.08em] text-[var(--ui-text-tertiary)]">tool result</div>
+      <div className="max-h-[260px] min-w-0 overflow-auto px-2.5 py-1">
         <TerminalOutput chunks={[stripAnsi(content)]} compact />
       </div>
     </div>
@@ -960,9 +1018,9 @@ function SwitchModeRow({ call }: { call: ToolCall }) {
   const def = isChatMode(target) ? modeDef(target) : null;
   const Icon = def?.icon ?? Sparkles;
   return (
-    <div className="flex min-h-8 items-center gap-1.5 px-2 py-1 text-sm">
-      <Icon className="size-3.5 shrink-0 text-primary" />
-      <span className="text-secondary-foreground">Switched to</span>
+    <div className="flex min-h-6 items-center gap-1.5 px-1 py-0.5 text-[length:var(--conversation-tool-font-size)]">
+      <Icon className="size-3.5 shrink-0" style={def ? { color: def.accent } : undefined} />
+      <span className="text-[var(--ui-text-tertiary)]">Switched to</span>
       <span className="font-medium text-foreground">{def?.label ?? (target || "a")} mode</span>
     </div>
   );
@@ -973,23 +1031,23 @@ function TodoRow({ call }: { call: ToolCall }) {
   if (todos.length === 0) return null;
   const done = todos.filter((t) => t.status === "completed").length;
   return (
-    <div className="my-1 w-full min-w-0 max-w-xl overflow-hidden rounded-xl border border-card-border bg-card">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs font-medium text-secondary-foreground">
+    <div className="w-full min-w-0 max-w-xl overflow-hidden rounded-md border border-[var(--ui-stroke-tertiary)] bg-transparent">
+      <div className="flex items-center gap-2 border-b border-[var(--ui-stroke-tertiary)] px-3 py-1.5 text-[length:var(--conversation-tool-font-size)] font-medium text-[var(--ui-text-secondary)]">
         <Check className="size-3.5" />
-        Checked tasks
-        <span className="ml-auto tabular-nums">{done}/{todos.length}</span>
+        Tasks
+        <span className="ml-auto font-mono text-[0.65rem] tabular-nums text-[var(--ui-text-tertiary)]">{done}/{todos.length}</span>
       </div>
-      <div className="px-3 py-2">
+      <div className="px-3 py-1.5">
         {todos.map((todo, index) => (
-          <div key={`${todo.id || "todo"}-${index}`} className="flex items-center gap-2 py-1 text-sm">
+          <div key={`${todo.id || "todo"}-${index}`} className="flex items-center gap-2 py-1 text-[length:var(--conversation-tool-font-size)]">
             {todo.status === "completed" ? (
-              <Check className="size-3.5 shrink-0 text-green-500" />
+              <Check className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
             ) : todo.status === "in_progress" ? (
               <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
             ) : (
-              <Circle className="size-3 shrink-0 text-muted-foreground" />
+              <Circle className="size-3 shrink-0 text-[var(--ui-text-quaternary)]" />
             )}
-            <span className={cn("min-w-0 break-words", todo.status === "completed" && "text-muted-foreground line-through", todo.status !== "completed" && "text-foreground/90")}>{todo.content}</span>
+            <span className={cn("min-w-0 break-words", todo.status === "completed" ? "text-[var(--ui-text-tertiary)] line-through" : "text-[var(--ui-text-secondary)]")}>{todo.content}</span>
           </div>
         ))}
       </div>

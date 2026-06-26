@@ -13,6 +13,8 @@ interface ChatState {
   streamingByChat: Record<string, boolean>;
   pendingQuestion: PendingQuestion | null;
   pendingPlan: PendingPlan | null;
+  pendingQuestionByChat: Record<string, PendingQuestion>;
+  pendingPlanByChat: Record<string, PendingPlan>;
   draftByChat: Record<string, string>;
   queuedByChat: Record<string, QueuedMessage[]>;
 
@@ -36,6 +38,7 @@ interface ChatState {
   setChatProject: (chatId: string, projectId: string | null) => Promise<void>;
   setPendingQuestion: (question: PendingQuestion | null) => void;
   setPendingPlan: (plan: PendingPlan | null) => void;
+  clearPendingForChat: (chatId: string) => void;
   setDraft: (chatId: string, value: string | null) => void;
   enqueueQueuedMessage: (chatId: string, content: string) => QueuedMessage | null;
   updateQueuedMessage: (chatId: string, id: string, content: string) => void;
@@ -72,6 +75,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingByChat: {},
   pendingQuestion: null,
   pendingPlan: null,
+  pendingQuestionByChat: {},
+  pendingPlanByChat: {},
   draftByChat: {},
   queuedByChat: {},
 
@@ -140,13 +145,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const messagesByChat = { ...s.messagesByChat };
       const draftByChat = { ...s.draftByChat };
       const queuedByChat = { ...s.queuedByChat };
+      const pendingQuestionByChat = { ...s.pendingQuestionByChat };
+      const pendingPlanByChat = { ...s.pendingPlanByChat };
       for (const deletedId of deletedIds) delete messagesByChat[deletedId];
       for (const deletedId of deletedIds) {
         delete draftByChat[deletedId];
         delete queuedByChat[deletedId];
+        delete pendingQuestionByChat[deletedId];
+        delete pendingPlanByChat[deletedId];
       }
       const currentChatId = s.currentChatId && deletedIds.has(s.currentChatId) ? (chats[0]?.id ?? null) : s.currentChatId;
-      return { chats, messagesByChat, currentChatId, draftByChat, queuedByChat };
+      return {
+        chats,
+        messagesByChat,
+        currentChatId,
+        draftByChat,
+        queuedByChat,
+        pendingQuestionByChat,
+        pendingPlanByChat,
+        pendingQuestion: s.pendingQuestion && deletedIds.has(s.pendingQuestion.chatId) ? null : s.pendingQuestion,
+        pendingPlan: s.pendingPlan && deletedIds.has(s.pendingPlan.chatId) ? null : s.pendingPlan,
+      };
     });
     try {
       const res = await fetch(`/api/chats/${id}`, { method: "DELETE" });
@@ -214,8 +233,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { streamingByChat, isStreaming: Object.keys(streamingByChat).length > 0 };
     }),
 
-  setPendingQuestion: (pendingQuestion) => set({ pendingQuestion }),
-  setPendingPlan: (pendingPlan) => set({ pendingPlan }),
+  setPendingQuestion: (pendingQuestion) =>
+    set((s) => {
+      if (!pendingQuestion) return { pendingQuestion: null, pendingQuestionByChat: {} };
+      return {
+        pendingQuestion,
+        pendingQuestionByChat: { ...s.pendingQuestionByChat, [pendingQuestion.chatId]: pendingQuestion },
+      };
+    }),
+  setPendingPlan: (pendingPlan) =>
+    set((s) => {
+      if (!pendingPlan) return { pendingPlan: null, pendingPlanByChat: {} };
+      return {
+        pendingPlan,
+        pendingPlanByChat: { ...s.pendingPlanByChat, [pendingPlan.chatId]: pendingPlan },
+      };
+    }),
+
+  clearPendingForChat: (chatId) =>
+    set((s) => {
+      const pendingQuestionByChat = { ...s.pendingQuestionByChat };
+      const pendingPlanByChat = { ...s.pendingPlanByChat };
+      delete pendingQuestionByChat[chatId];
+      delete pendingPlanByChat[chatId];
+      return {
+        pendingQuestionByChat,
+        pendingPlanByChat,
+        pendingQuestion: s.pendingQuestion?.chatId === chatId ? null : s.pendingQuestion,
+        pendingPlan: s.pendingPlan?.chatId === chatId ? null : s.pendingPlan,
+      };
+    }),
 
   setDraft: (chatId, value) =>
     set((s) => {
@@ -303,6 +350,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId }),
       });
+      // 409 = the chat's workspace root is already locked (it has messages).
+      // That's an expected terminal state, not an error: keep whatever project
+      // the chat is already bound to and move on instead of throwing.
+      if (res.status === 409) {
+        set({ chats: previous });
+        return;
+      }
       if (!res.ok) throw new Error(`Project update failed: ${res.status}`);
     } catch (error) {
       set({ chats: previous });
@@ -314,7 +368,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 }));
 
 /** Persist a finalized message to SQLite (fire-and-forget). */
-export function persistMessage(chatId: string, message: { id: string; role: string; content: string; blocks: ContentBlock[]; status: string; model?: string; createdAt: number }) {
+export function persistMessage(chatId: string, message: { id: string; role: string; content: string; blocks: ContentBlock[]; status: string; model?: string; createdAt: number; durationMs?: number }) {
   void fetch(`/api/chats/${chatId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

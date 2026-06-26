@@ -6,22 +6,9 @@ import { cn } from "@/lib/utils";
 
 type StatusMode = "requesting" | "thinking" | "responding" | "tool-input" | "tool-use";
 
-const STREAMING_VERBS = [
-  "Accomplishing", "Architecting", "Baking", "Bootstrapping", "Brewing",
-  "Calculating", "Caramelizing", "Cascading", "Cerebrating", "Choreographing",
-  "Churning", "Coalescing", "Cogitating", "Composing", "Computing",
-  "Concocting", "Contemplating", "Cooking", "Crafting", "Creating",
-  "Crunching", "Crystallizing", "Cultivating", "Deciphering", "Deliberating",
-  "Enchanting", "Envisioning", "Fermenting", "Flambéing", "Forging",
-  "Generating", "Harmonizing", "Hatching", "Imagining", "Incubating",
-  "Inferring", "Manifesting", "Marinating", "Mulling", "Orchestrating",
-  "Percolating", "Pondering", "Processing", "Puzzling", "Ruminating",
-  "Sautéing", "Seasoning", "Simmering", "Sketching", "Smooshing",
-  "Spinning", "Synthesizing", "Tempering", "Tinkering", "Transmuting",
-  "Whirring", "Whisking", "Working", "Wrangling", "Zesting",
-];
+const STREAMING_VERBS = ["Working", "Thinking", "Reading", "Editing", "Checking", "Responding"];
 
-const COMPLETION_VERBS = ["Baked", "Brewed", "Churned", "Cogitated", "Cooked", "Crunched", "Sautéed", "Worked"];
+const COMPLETION_VERBS = ["Worked", "Finished", "Completed", "Checked"];
 
 const SPINNER_FRAME_RATE_MS = 80;
 const SPINNER_FRAMES = [
@@ -74,9 +61,9 @@ export function TurnStatusLine({ message }: { message?: Message }) {
   // ── Completed state: ✻ Cooked for 2m 15s ──
   if (completed) {
     return (
-      <div className="mx-auto flex w-full max-w-3xl justify-center px-4 pb-1 font-mono text-[13px] leading-6 animate-in fade-in duration-300">
-        <div className="flex select-none items-center gap-1.5 text-muted-foreground/60 transition-opacity duration-1000">
-          <span className="text-[rgb(215,119,87)]/60">{COMPLETED_SYMBOL}</span>
+      <div className="mx-auto flex w-full max-w-[var(--composer-width)] justify-center px-3 pb-1 font-mono text-[12px] leading-5 animate-in fade-in duration-300">
+        <div className="flex select-none items-center gap-1.5 text-[var(--ui-text-tertiary)] transition-opacity duration-1000">
+          <span className="text-primary/70">{COMPLETED_SYMBOL}</span>
           <span>{COMPLETION_VERBS[completionIdx]} for {formatDuration(completed.durationMs)}</span>
         </div>
       </div>
@@ -93,7 +80,7 @@ export function TurnStatusLine({ message }: { message?: Message }) {
   if (elapsed > 0) infoParts.push(formatElapsedCompact(elapsed));
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl justify-center px-4 pb-1 font-mono text-[13px] leading-6">
+    <div className="mx-auto flex w-full max-w-[var(--composer-width)] justify-center px-3 pb-1 font-mono text-[12px] leading-5">
       <div className="flex min-w-0 max-w-full select-none items-center justify-center gap-1.5">
         <span className={cn("inline-flex w-4 shrink-0 justify-center transition-colors duration-300", spinnerColor)}>
           {SPINNER_FRAMES[frame]}

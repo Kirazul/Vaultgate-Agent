@@ -17,7 +17,7 @@ import { drainTurnSteer } from "./turn-control";
 import { connectAllServers, getAllMcpTools, callMcpTool } from "@/lib/mcp/client";
 import type { McpToolDef } from "@/lib/mcp/types";
 import { consumePermissionResponse, evaluateToolPermission, normalizeApprovalSettings, permissionQuestion } from "./permissions";
-import { isPlanApprovalMessage, extractApprovedPlanPath, planImplementationDirective } from "@/lib/chat/plan";
+import { isPlanApprovalMessage, extractApprovedPlanPath, planImplementationDirective, isPlanRevisionMessage, planRevisionDirective } from "@/lib/chat/plan";
 
 const DEFAULT_MAX_ITERATIONS = 128;
 const DEFAULT_PROVIDER_RETRY_COUNT = Number(process.env.PROVIDER_RETRY_COUNT || 10);
@@ -114,6 +114,12 @@ export function streamAgent(req: ChatRequest): ReadableStream<Uint8Array> {
             // in implementation mode (so it never re-plans) and point straight at
             // the saved plan file (so it reads it in one shot, no searching).
             content = planImplementationDirective(extractApprovedPlanPath(m.content));
+          } else if (isLast && m.role === "user" && isPlanRevisionMessage(m.content)) {
+            // Mirror of the approval flow: the user-visible message stays short
+            // ("Revise the plan.") and the verbose "redraft via the Plan tool,
+            // don't implement yet" instruction is appended here for the model.
+            const feedback = m.content.replace(/^revise the plan\.?\s*/i, "").trim();
+            content = `${planRevisionDirective()}\n\nFeedback:\n${feedback}`;
           }
           return { role: m.role, content };
         });

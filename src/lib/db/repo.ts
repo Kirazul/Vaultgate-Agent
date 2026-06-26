@@ -85,6 +85,7 @@ interface MessageRow {
   status: string;
   model: string | null;
   created_at: number;
+  duration_ms: number | null;
 }
 
 function toChat(r: ChatRow): Chat {
@@ -117,6 +118,7 @@ function toMessage(r: MessageRow): Message {
     status: r.status as Message["status"],
     model: r.model ?? undefined,
     createdAt: r.created_at,
+    durationMs: r.duration_ms ?? undefined,
   });
 }
 
@@ -204,10 +206,10 @@ export async function upsertMessage(m: Message): Promise<void> {
   // Ensure the parent chat exists (foreign key safety).
   await run("INSERT OR IGNORE INTO chats (id, title, model, workspace_path, created_at, updated_at) VALUES (?, 'New Chat', '', ?, ?, ?)", [message.chatId, defaultWorkspaceRoot(), now, now]);
   await run(
-    `INSERT INTO messages (id, chat_id, role, content, blocks, status, model, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET content = excluded.content, blocks = excluded.blocks, status = excluded.status`,
-    [message.id, message.chatId, message.role, message.content, JSON.stringify(message.blocks), message.status, message.model ?? null, message.createdAt],
+    `INSERT INTO messages (id, chat_id, role, content, blocks, status, model, created_at, duration_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET content = excluded.content, blocks = excluded.blocks, status = excluded.status, duration_ms = excluded.duration_ms`,
+    [message.id, message.chatId, message.role, message.content, JSON.stringify(message.blocks), message.status, message.model ?? null, message.createdAt, message.durationMs ?? null],
   );
   await run("UPDATE chats SET updated_at = ?, model = CASE WHEN model = '' AND ? <> '' THEN ? ELSE model END WHERE id = ?", [now, message.model ?? "", message.model ?? "", message.chatId]);
 }

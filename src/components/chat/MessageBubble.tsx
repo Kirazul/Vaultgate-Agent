@@ -63,12 +63,12 @@ function MessageBubbleImpl({ message, onRegenerate }: { message: Message; onRege
       <div
         role="article"
         aria-label="User message"
-        className="waterfall group/user sticky top-0 z-10 mb-4 bg-background pt-4 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-7 after:bg-gradient-to-b after:from-background after:to-transparent after:content-['']"
+        className="waterfall group/user sticky top-0 z-10 mb-3 bg-[var(--ui-bg-chrome)] pt-3 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-7 after:bg-gradient-to-b after:from-[var(--ui-bg-chrome)] after:to-transparent after:content-['']"
       >
-        <div className="relative rounded-xl bg-card-border p-px">
-          <div className="relative flex flex-col gap-0 overflow-hidden rounded-[11px] bg-card p-2">
+        <div className="relative rounded-xl bg-[var(--ui-stroke-tertiary)] p-px">
+          <div className="relative flex flex-col gap-0 overflow-hidden rounded-[11px] bg-[var(--ui-bg-editor)] px-3 py-2">
             <div className="whitespace-pre-wrap break-words text-sm">
-              <Markdown content={message.content} chatId={workspaceChatId} className="text-sm leading-relaxed [&_p]:mb-1.5 [&_ul]:my-1.5" />
+              <Markdown content={message.content} chatId={workspaceChatId} className="text-[length:var(--conversation-text-font-size)] leading-relaxed [&_p]:mb-1.5 [&_ul]:my-1.5" />
             </div>
             <div className="absolute bottom-1 right-1 flex items-center gap-1 rounded-full bg-card p-1 opacity-0 shadow-sm transition-all group-hover/user:opacity-100">
               <span className="mr-1 self-center text-xs text-muted-foreground">{formatTimestamp(message.createdAt)}</span>
@@ -99,11 +99,11 @@ function MessageBubbleImpl({ message, onRegenerate }: { message: Message; onRege
   const fileDiffs = !streaming ? getMessageFileDiffs(message.blocks) : [];
 
   return (
-    <div role="article" aria-label="Agent response" className="waterfall group mb-2 flex flex-col">
+    <div role="article" aria-label="Agent response" className="waterfall group mb-3 flex flex-col gap-[var(--turn-block-gap)]">
       {message.blocks.length > 0 ? (
         <OrderedBlocks message={message} hasWork={hasWork} workOpen={workOpen} setWorkOpen={setWorkOpen} streaming={streaming} stopped={stopped} lastTextIndex={lastTextIndex} workspaceChatId={workspaceChatId} />
       ) : streaming ? (
-        <div className="px-2 py-1">
+        <div className="px-[var(--message-indent)]">
           <ThinkingDots />
         </div>
       ) : stopped ? (
@@ -113,12 +113,12 @@ function MessageBubbleImpl({ message, onRegenerate }: { message: Message; onRege
       {!streaming && fileDiffs.length > 0 && <FileChangeSummary diffs={fileDiffs} chatId={workspaceChatId} />}
 
       {!streaming && (stopped || failed) && canRegenerate && (
-        <div className="px-2 pt-1">
+        <div className="px-[var(--message-indent)]">
           <button
             type="button"
             onClick={() => onRegenerate?.(message)}
             disabled={isChatStreaming}
-            className="rounded-lg border border-border bg-muted/40 px-2.5 py-1.5 text-xs font-medium text-secondary-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            className="rounded-md border border-[var(--ui-stroke-tertiary)] px-2.5 py-1.5 text-xs font-medium text-[var(--ui-text-secondary)] transition-colors hover:bg-[var(--ui-control-hover-background)] hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
             title="Rewind to the prompt that produced this response and run it again"
           >
             Retry from here
@@ -127,21 +127,21 @@ function MessageBubbleImpl({ message, onRegenerate }: { message: Message; onRege
       )}
 
       {!streaming && (message.content || stopped) && (
-        <div className="flex items-center gap-1 px-2 pt-1 opacity-0 transition-opacity group-hover:opacity-100">
-          <span className="mr-auto flex h-5 items-center whitespace-nowrap text-xs text-muted-foreground">{stopped ? `Stopped · ${formatTimestamp(message.createdAt)}` : formatTimestamp(message.createdAt)}</span>
+        <div className="flex items-center gap-1 px-[var(--message-indent)] opacity-0 transition-opacity group-hover:opacity-100">
+          <span className="mr-auto flex h-5 items-center whitespace-nowrap text-[0.7rem] text-[var(--ui-text-quaternary)]">{stopped ? `Stopped · ${formatTimestamp(message.createdAt)}` : formatTimestamp(message.createdAt)}</span>
           {canRegenerate && (
             <button
               onClick={() => onRegenerate?.(message)}
               disabled={isChatStreaming}
-              className="flex items-center justify-center rounded-md p-0.5 text-secondary-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+              className="flex items-center justify-center rounded-md p-0.5 text-[var(--ui-text-tertiary)] transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
               title="Regenerate from the previous user message"
             >
               <RotateCcw className="size-4" />
             </button>
           )}
           {message.content && (
-            <button onClick={copy} className="flex items-center justify-center rounded-md p-0.5 text-secondary-foreground transition-colors hover:text-foreground" title="Copy">
-              {copied ? <Check className="size-4 text-green-500" /> : <Copy className="size-4" />}
+            <button onClick={copy} className="flex items-center justify-center rounded-md p-0.5 text-[var(--ui-text-tertiary)] transition-colors hover:text-foreground" title="Copy">
+              {copied ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
             </button>
           )}
         </div>
@@ -176,7 +176,7 @@ function OrderedBlocks({
       {message.blocks.map((block, i) => {
         if (block.type === "text") {
           return (
-            <div key={`text-${i}`} className="px-2 pb-1 text-sm leading-relaxed text-foreground">
+            <div key={`text-${i}`} className="px-[var(--message-indent)] text-[length:var(--conversation-text-font-size)] leading-relaxed text-foreground">
               <Markdown content={block.content} chatId={workspaceChatId} />
               {streaming && i === lastTextIndex && <span className="streaming-cursor" />}
             </div>
@@ -186,12 +186,10 @@ function OrderedBlocks({
         const showSummary = hasWork && !workSummaryShown;
         workSummaryShown = true;
         return (
-          <div key={`${block.type}-${i}`}>
+          <div key={`${block.type}-${i}`} className="flex flex-col gap-[var(--tool-row-gap)] px-[var(--message-indent)]">
             {showSummary && <WorkSummary open={workOpen} setOpen={setWorkOpen} streaming={streaming} stopped={stopped} durationMs={message.durationMs} createdAt={message.createdAt} />}
             {workOpen && (
-              <div className="pl-3">
-                <WorkBlock block={block} streaming={streaming} isLast={i === message.blocks.length - 1} chatId={workspaceChatId} />
-              </div>
+              <WorkBlock block={block} streaming={streaming} isLast={i === message.blocks.length - 1} chatId={workspaceChatId} />
             )}
           </div>
         );
@@ -208,15 +206,15 @@ function WorkSummary({ open, setOpen, streaming, stopped, durationMs, createdAt 
       <button
         onClick={() => setOpen(!open)}
         title="The thinking and tool calls VaultGate used. Click to show or hide the details."
-        className="group flex min-h-8 w-full select-none items-center gap-1 rounded-lg px-2 py-1 text-left text-sm tabular-nums text-foreground transition-colors hover:bg-muted"
+        className="group/row flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-[length:var(--conversation-tool-font-size)] tabular-nums transition-colors hover:text-foreground"
       >
-        <span className={cn("text-secondary-foreground", streaming && "animate-pulse")}>
+        <span className={cn("font-medium text-[var(--ui-text-secondary)]", streaming && "shimmer")}>
           {label}
         </span>
         <ChevronRight
           className={cn(
-            "size-3.5 shrink-0 text-muted-foreground transition-all duration-200 group-hover:text-secondary-foreground",
-            open && "rotate-90 text-secondary-foreground",
+            "size-3 shrink-0 text-[var(--ui-text-quaternary)] transition-all duration-150",
+            open ? "rotate-90 text-[var(--ui-text-tertiary)] opacity-80" : "opacity-0 group-hover/row:opacity-80",
           )}
         />
       </button>

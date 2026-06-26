@@ -1,5 +1,5 @@
 "use client";
-import { Plus, Trash2, PanelLeft, Boxes, Clock, ChevronRight, Folder, FolderOpen, FolderPlus } from "lucide-react";
+import { Plus, Trash2, PanelLeft, Boxes, Clock, ChevronRight, Folder, FolderOpen, FolderPlus, Search } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { useChatStore } from "@/lib/store/chat-store";
@@ -58,6 +58,8 @@ export function Sidebar() {
   const [projectDeleteInput, setProjectDeleteInput] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [deletingProject, setDeletingProject] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const streamingByChat = useChatStore((s) => s.streamingByChat);
 
   const confirmDelete = async () => {
     if (!pendingDelete) return;
@@ -92,7 +94,14 @@ export function Sidebar() {
     }
   };
 
-  const visibleChats = useMemo(() => chats.filter((c) => c.type !== "subagent"), [chats]);
+  const visibleChats = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return chats.filter((c) => {
+      if (c.type === "subagent") return false;
+      if (!query) return true;
+      return [c.title, c.model, c.workspacePath].filter(Boolean).some((value) => String(value).toLowerCase().includes(query));
+    });
+  }, [chats, searchQuery]);
 
   const chatsByProject = useMemo(() => {
     const map = new Map<string | null, Chat[]>();
@@ -105,11 +114,14 @@ export function Sidebar() {
   }, [visibleChats]);
 
   const projectsWithChats = useMemo(() => {
-    return projects.map((project) => ({
-      project,
-      chats: chatsByProject.get(project.id) ?? [],
-    }));
-  }, [projects, chatsByProject]);
+    const query = searchQuery.trim().toLowerCase();
+    return projects
+      .map((project) => ({
+        project,
+        chats: chatsByProject.get(project.id) ?? [],
+      }))
+      .filter(({ project, chats }) => !query || chats.length > 0 || project.name.toLowerCase().includes(query) || project.path.toLowerCase().includes(query));
+  }, [projects, chatsByProject, searchQuery]);
 
   const orphanChats = chatsByProject.get(null) ?? [];
 
@@ -157,19 +169,31 @@ export function Sidebar() {
           <button
             onClick={handleNewChat}
             aria-label="New Conversation"
-            className="flex h-8 min-w-0 flex-grow items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-normal transition-colors bg-primary/10 hover:bg-primary/20 text-foreground outline-none"
+            className="flex h-8 min-w-0 flex-grow items-center gap-1.5 rounded-md px-2 py-1 text-sm font-normal text-foreground outline-none transition-colors bg-[var(--ui-control-active-background)] hover:bg-[var(--ui-control-hover-background)]"
           >
             <Plus className="size-[14px] shrink-0 text-primary" />
             <span className="select-none truncate font-medium">New Conversation</span>
           </button>
 
           <button
-            className="flex h-8 min-w-0 flex-grow items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-normal transition-colors bg-transparent hover:bg-sidebar-muted text-secondary-foreground outline-none"
+            className="flex h-8 min-w-0 flex-grow items-center gap-1.5 rounded-md bg-transparent px-2 py-1 text-sm font-normal text-[var(--ui-text-secondary)] outline-none transition-colors hover:bg-[var(--ui-row-hover-background)] hover:text-foreground"
             title="Conversation History"
           >
             <Clock className="size-[14px] shrink-0 opacity-60" />
             <span className="select-none truncate">Conversation History</span>
           </button>
+        </div>
+
+        <div className="px-2 pt-2">
+          <label className="flex h-8 items-center gap-1.5 rounded-md border border-transparent px-2 text-xs text-[var(--ui-text-tertiary)] transition-colors focus-within:border-[var(--ui-stroke-primary)] focus-within:bg-[var(--ui-bg-editor)]">
+            <Search className="size-3.5 shrink-0" />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search sessions"
+              className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-[var(--ui-text-quaternary)]"
+            />
+          </label>
         </div>
 
         {/* Projects section header */}
@@ -191,7 +215,7 @@ export function Sidebar() {
         >
           {projectsWithChats.length === 0 && orphanChats.length === 0 && (
             <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-              No projects yet — open a folder to start
+              {searchQuery.trim() ? "No matching sessions" : "No projects yet — open a folder to start"}
             </p>
           )}
 
@@ -259,6 +283,7 @@ export function Sidebar() {
                         key={chat.id}
                         chat={chat}
                         isCurrent={chat.id === currentChatId}
+                        isStreaming={Boolean(streamingByChat[chat.id])}
                         onSelect={() => {
                           setActiveProject(project.id);
                           void selectChat(chat.id);
@@ -284,6 +309,7 @@ export function Sidebar() {
                     key={chat.id}
                     chat={chat}
                     isCurrent={chat.id === currentChatId}
+                    isStreaming={Boolean(streamingByChat[chat.id])}
                     onSelect={() => void selectChat(chat.id)}
                     onDelete={() => setPendingDelete(chat)}
                   />
@@ -378,11 +404,13 @@ export function Sidebar() {
 function ChatItem({
   chat,
   isCurrent,
+  isStreaming,
   onSelect,
   onDelete,
 }: {
   chat: Chat;
   isCurrent: boolean;
+  isStreaming: boolean;
   onSelect: () => void;
   onDelete: () => void;
 }) {
@@ -392,10 +420,10 @@ function ChatItem({
         role="button"
         tabIndex={0}
         className={cn(
-          "select-none cursor-pointer rounded-lg min-h-[30px] py-1 flex flex-row gap-1 items-center justify-between px-2 outline-none ml-[18px]",
+          "select-none cursor-pointer rounded-md min-h-[30px] py-1 flex flex-row gap-1 items-center justify-between px-2 outline-none ml-[18px] transition-colors",
           isCurrent
-            ? "bg-sidebar-secondary text-foreground"
-            : "hover:bg-sidebar-muted text-secondary-foreground",
+            ? "bg-[var(--ui-row-active-background)] text-foreground"
+            : "text-[var(--ui-text-secondary)] hover:bg-[var(--ui-row-hover-background)] hover:text-foreground",
         )}
         onClick={onSelect}
       >
@@ -409,6 +437,7 @@ function ChatItem({
             >
               {chat.title}
             </span>
+            {isStreaming && <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary" title="Running" />}
           </div>
         </div>
         <div className="flex items-center shrink-0 gap-1">

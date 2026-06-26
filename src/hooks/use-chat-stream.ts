@@ -120,9 +120,8 @@ export function useChatStream() {
     const model = settings.provider.model;
     if (!model) return;
 
-    // Sending a message answers/supersedes any pending clarifying question or plan.
-    chatStore.setPendingQuestion(null);
-    chatStore.setPendingPlan(null);
+    // Sending a message answers/supersedes any pending clarifying question or plan for this chat.
+    chatStore.clearPendingForChat(chatId);
     await hydrateSubAgentTranscripts(chatId);
 
     // 1. User message (optimistic + persisted)
@@ -181,7 +180,10 @@ export function useChatStream() {
     const toolNamesById = new Map<string, string>();
     const initializedToolIds = new Set<string>();
     const startedAt = Date.now();
-    const COMMIT_INTERVAL_MS = 45;
+    // ~30ms (~33fps) reads as smooth, continuous typing while still coalescing
+    // bursty provider deltas into one render. The rAF gate below caps it to the
+    // display refresh so it never over-commits between frames.
+    const COMMIT_INTERVAL_MS = 30;
     let dirty = false;
     let finished = false;
     let rafId = 0;
@@ -238,8 +240,8 @@ export function useChatStream() {
               if (initializedToolIds.has(event.id)) break;
               initializedToolIds.add(event.id);
               const ws = useWorkspaceStore.getState();
-              if (["Write", "Edit", "MultiEdit"].includes(toolName) && !ws.panelOpen) ws.notifyPanel();
-              if (["Bash", "Write", "Edit", "MultiEdit"].includes(toolName)) ws.setFocusedTool(event.id);
+              if (["Write", "Edit", "MultiEdit", "ApplyPatch", "Delete", "Move"].includes(toolName) && !ws.panelOpen) ws.notifyPanel();
+              if (["Bash", "Write", "Edit", "MultiEdit", "ApplyPatch", "Delete", "Move"].includes(toolName)) ws.setFocusedTool(event.id);
               if (toolName === "Task") {
                 const args = parseLooseObject(event.arguments);
                 useChatStore.getState().upsertChat({
@@ -352,6 +354,7 @@ export function useChatStream() {
         content: finalMsg.content,
         blocks: finalMsg.blocks,
         status: finalMsg.status,
+        durationMs: finalMsg.durationMs,
       });
       store.setStreaming(chatId, false);
       abortByChatRef.current.delete(chatId);
@@ -370,7 +373,6 @@ export function useChatStream() {
       } else {
         persistMessage(chatId, { ...finalMsg });
       }
-      useWorkspaceStore.getState().closePanel();
     }
   }, []);
 
@@ -386,7 +388,7 @@ export function useChatStream() {
 }
 
 function isWorkspaceChangingTool(toolName: string | undefined): boolean {
-  return toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit" || toolName === "Delete" || toolName === "Move" || toolName === "Bash" || toolName === "Open" || toolName === "Desktop";
+  return toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit" || toolName === "ApplyPatch" || toolName === "Delete" || toolName === "Move" || toolName === "Bash" || toolName === "Open" || toolName === "Desktop";
 }
 
 function markCancelledToolResults(blocks: ContentBlock[]): ContentBlock[] {

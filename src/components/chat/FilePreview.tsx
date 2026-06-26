@@ -281,11 +281,11 @@ function RawTextPreview({ content, filePath }: { content: string; filePath: stri
   const lines = content.split("\n");
   return (
     <div className="h-full overflow-auto bg-[#08090d] text-[12.5px] text-zinc-200">
-      <pre className="min-w-max p-0 font-mono leading-relaxed">
+      <pre className="w-full min-w-0 p-0 font-mono leading-relaxed">
         {lines.map((line, index) => (
-          <div key={index} className="group flex min-h-[1.45rem] px-3 hover:bg-white/[0.035]">
+          <div key={index} className="group flex min-h-[1.45rem] pl-3 pr-8 hover:bg-white/[0.035]">
             <span className="mr-4 w-10 shrink-0 select-none text-right text-zinc-600 group-hover:text-zinc-500">{index + 1}</span>
-            <code className={cn("whitespace-pre", line.length === 0 && "text-zinc-700")}>{line.length ? highlightLine(line, filePath) : " "}</code>
+            <code className={cn("min-w-0 flex-1 whitespace-pre-wrap break-words", line.length === 0 && "text-zinc-700")}>{line.length ? highlightLine(line, filePath) : " "}</code>
           </div>
         ))}
       </pre>
@@ -409,11 +409,11 @@ export function FilePreview({ chatId, filePath, preview, token }: { chatId: stri
         <span className="truncate text-zinc-400">{filePath}</span>
         <span className="rounded border border-zinc-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-zinc-500">{languageForPath(filePath)}</span>
       </div>
-      <pre className="min-w-max p-0 font-mono leading-relaxed">
+      <pre className="w-full min-w-0 p-0 font-mono leading-relaxed">
         {lines.map((line, index) => (
-          <div key={index} className="group flex min-h-[1.45rem] px-3 hover:bg-white/[0.035]">
+          <div key={index} className="group flex min-h-[1.45rem] pl-3 pr-8 hover:bg-white/[0.035]">
             <span className="mr-4 w-10 shrink-0 select-none text-right text-zinc-600 group-hover:text-zinc-500">{index + 1}</span>
-            <code className={cn("whitespace-pre", line.length === 0 && "text-zinc-700")}>{line.length ? highlightLine(line, filePath) : " "}</code>
+            <code className={cn("min-w-0 flex-1 whitespace-pre-wrap break-words", line.length === 0 && "text-zinc-700")}>{line.length ? highlightLine(line, filePath) : " "}</code>
           </div>
         ))}
       </pre>

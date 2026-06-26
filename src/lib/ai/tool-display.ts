@@ -159,7 +159,7 @@ function firstString(...values: unknown[]): string {
 
 export function extractFilePath(args: string): string {
   const a = parseJsonLoose(args) || {};
-  return firstString(a.filepath, a.file_path, a.path, a.relativePath);
+  return firstString(a.filepath, a.file_path, a.path, a.relativePath, a.source, a.destination);
 }
 
 export function summarizeTool(name: string, args: string): string {
@@ -310,6 +310,15 @@ export function diffStats(name: string, args: string): { added: number; removed:
     }
     return { added, removed };
   }
+  if (n === "applypatch") {
+    const patchDiffs = collectPatchDiffs(String(a.patch || a.input || ""));
+    if (patchDiffs.length === 0) return null;
+    return patchDiffs.reduce(
+      (total, diff) => ({ added: total.added + diff.stats.added, removed: total.removed + diff.stats.removed }),
+      { added: 0, removed: 0 },
+    );
+  }
+  if (n === "delete" || n === "move") return { added: 0, removed: 0 };
   return null;
 }
 
@@ -395,13 +404,88 @@ export interface FileDiffEntry {
   stats: { added: number; removed: number };
 }
 
+export function collectPatchDiffs(patch: string): FileDiffEntry[] {
+  const entries: FileDiffEntry[] = [];
+  let current: FileDiffEntry | null = null;
+  let oldLines: string[] = [];
+  let nextLines: string[] = [];
+
+  const flushHunk = () => {
+    if (!current) return;
+    const old = oldLines.join("\n");
+    const next = nextLines.join("\n");
+    if (old || next) {
+      const stats = diffRowStats(lineDiff(old, next));
+      current.hunks.push({ old, next });
+      current.stats.added += stats.added;
+      current.stats.removed += stats.removed;
+    }
+    oldLines = [];
+    nextLines = [];
+  };
+
+  const ensureEntry = (filePath: string) => {
+    flushHunk();
+    const path = filePath.trim() || "patch";
+    current = entries.find((entry) => entry.filePath === path) ?? null;
+    if (!current) {
+      current = { filePath: path, hunks: [], stats: { added: 0, removed: 0 } };
+      entries.push(current);
+    }
+  };
+
+  for (const rawLine of patch.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n")) {
+    const fileMatch = /^\*\*\*\s+(?:Update|Add|Delete) File:\s*(.+)$/.exec(rawLine);
+    if (fileMatch) {
+      ensureEntry(fileMatch[1]);
+      continue;
+    }
+    if (!current) continue;
+    if (rawLine.startsWith("@@")) {
+      flushHunk();
+      continue;
+    }
+    if (rawLine.startsWith("+") && !rawLine.startsWith("+++")) {
+      nextLines.push(rawLine.slice(1));
+      continue;
+    }
+    if (rawLine.startsWith("-") && !rawLine.startsWith("---")) {
+      oldLines.push(rawLine.slice(1));
+      continue;
+    }
+    if (rawLine.startsWith(" ")) {
+      const context = rawLine.slice(1);
+      oldLines.push(context);
+      nextLines.push(context);
+    }
+  }
+  flushHunk();
+
+  return entries;
+}
+
 export function collectFileDiffs(calls: ToolCall[]): FileDiffEntry[] {
   const entries: FileDiffEntry[] = [];
   for (const call of calls) {
     const n = normalizeToolName(call.name);
-    if (!["write", "edit", "multiedit"].includes(n)) continue;
+    if (!["write", "edit", "multiedit", "applypatch", "delete", "move"].includes(n)) continue;
     const a = parseJsonLoose(call.arguments) || {};
-    const fp = extractFilePath(call.arguments) || "untitled";
+    if (n === "applypatch") {
+      for (const patchDiff of collectPatchDiffs(String(a.patch || a.input || ""))) {
+        const existing = entries.find((entry) => entry.filePath === patchDiff.filePath);
+        if (existing) {
+          existing.hunks.push(...patchDiff.hunks);
+          existing.stats.added += patchDiff.stats.added;
+          existing.stats.removed += patchDiff.stats.removed;
+        } else {
+          entries.push(patchDiff);
+        }
+      }
+      continue;
+    }
+    const moveSource = firstString(a.source, a.from, a.oldPath, a.old_path);
+    const moveDestination = firstString(a.destination, a.dest, a.to, a.newPath, a.new_path);
+    const fp = n === "move" && moveSource && moveDestination ? `${moveSource} → ${moveDestination}` : extractFilePath(call.arguments) || "untitled";
     const hunks: { old: string; next: string }[] = [];
     if (n === "write") hunks.push({ old: "", next: String(a.content ?? "") });
     else if (n === "edit") hunks.push({ old: String(a.old_str ?? ""), next: String(a.new_str ?? "") });

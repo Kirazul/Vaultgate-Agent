@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   X,
   RefreshCw,
@@ -18,6 +18,7 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronLeft,
+  Loader2,
 } from "lucide-react";
 import { EMPTY_TERMINAL_LINES, useWorkspaceStore, type TerminalEntry, type WorkspaceTab } from "@/lib/store/workspace-store";
 import { cn } from "@/lib/utils";
@@ -69,8 +70,8 @@ export function WorkspacePanel({ chatId }: { chatId: string }) {
   }, [activeTab, reviewDiffs]);
 
   return (
-    <div className="flex h-full flex-col border-l border-border bg-background text-foreground">
-      <div className="flex h-11 min-w-0 shrink-0 items-center gap-1 border-b border-border bg-sidebar px-2">
+    <div className="flex h-full flex-col bg-[var(--ui-bg-sidebar)] text-foreground">
+      <div className="flex h-10 min-w-0 shrink-0 items-center gap-1 border-b border-[var(--ui-stroke-tertiary)] bg-[var(--ui-bg-sidebar)] px-2">
         <div className="flex min-w-0 items-center gap-0.5 overflow-x-auto scrollbar-none">
           {tabs.map((t) => (
             <button
@@ -78,8 +79,8 @@ export function WorkspacePanel({ chatId }: { chatId: string }) {
               onClick={() => setTab(t.id)}
               title={t.hint}
               className={cn(
-                "flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-all",
-                activeTab === t.id ? "bg-secondary text-foreground" : "text-secondary-foreground hover:bg-sidebar-muted hover:text-foreground",
+                "flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-all",
+                activeTab === t.id ? "bg-[var(--ui-control-active-background)] text-foreground" : "text-[var(--ui-text-secondary)] hover:bg-[var(--ui-control-hover-background)] hover:text-foreground",
                 t.id === "review" && reviewUpdated && "bg-primary/10 text-primary ring-1 ring-primary/25",
               )}
             >
@@ -94,10 +95,10 @@ export function WorkspacePanel({ chatId }: { chatId: string }) {
           ))}
         </div>
         <div className="ml-auto flex items-center gap-0.5">
-          <button onClick={bumpWorkspace} className="flex size-6 items-center justify-center rounded-md text-foreground/70 transition-colors hover:bg-secondary hover:text-foreground" title="Refresh panel">
+          <button onClick={bumpWorkspace} className="flex size-6 items-center justify-center rounded-md text-foreground/70 transition-colors hover:bg-[var(--ui-control-hover-background)] hover:text-foreground" title="Refresh panel">
             <RefreshCw className="size-3.5" />
           </button>
-          <button onClick={closePanel} className="flex size-6 items-center justify-center rounded-md text-foreground/70 transition-colors hover:bg-secondary hover:text-foreground" title="Close">
+          <button onClick={closePanel} className="flex size-6 items-center justify-center rounded-md text-foreground/70 transition-colors hover:bg-[var(--ui-control-hover-background)] hover:text-foreground" title="Close">
             <X className="size-4" />
           </button>
         </div>
@@ -115,38 +116,176 @@ export function WorkspacePanel({ chatId }: { chatId: string }) {
 function TerminalTab({ chatId }: { chatId: string }) {
   const entries = useWorkspaceStore((s) => s.terminalByChat[chatId] ?? EMPTY_TERMINAL_LINES);
   const endRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+  const [copiedAt, setCopiedAt] = useState<number | null>(null);
+
+  // User-vs-programmatic scroll: only snap to bottom when the user was
+  // already following along; if they scrolled up to read older output,
+  // don't yank them back down mid-stream.
   useEffect(() => {
-    endRef.current?.scrollIntoView();
+    const root = endRef.current?.parentElement;
+    if (!root) return;
+    const onScroll = () => {
+      const distance = root.scrollHeight - root.scrollTop - root.clientHeight;
+      stickRef.current = distance < 80;
+    };
+    root.addEventListener("scroll", onScroll, { passive: true });
+    return () => root.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (stickRef.current) endRef.current?.scrollIntoView({ block: "end" });
   }, [entries.length]);
+
   const groups = terminalGroups(entries);
+  const runningGroups = groups.filter((group) => !group.id || isGroupActive(entries, group.id));
+
+  const copyAll = async () => {
+    const text = groups.map((g) => terminalGroupDisplay(g).chunks.join("")).join("\n");
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedAt(Date.now());
+      window.setTimeout(() => setCopiedAt((t) => (t === copiedAt ? null : t)), 1400);
+    } catch {
+      /* clipboard not available */
+    }
+  };
+
   return (
-    <div className="h-full overflow-auto bg-background py-3 text-foreground">
-      {groups.length === 0 ? (
-        <div className="mx-3 rounded-xl border border-dashed border-border bg-card/50 p-4">
-          <TerminalOutput chunks={[]} emptyLabel="No commands have run yet." />
+    <div className="flex h-full flex-col bg-[var(--ui-bg-chrome)] text-foreground">
+      <div className="flex h-9 shrink-0 items-center justify-between border-b border-[var(--ui-stroke-tertiary)] px-3 text-[length:var(--conversation-tool-font-size)] text-[var(--ui-text-tertiary)]">
+        <span className="font-mono uppercase tracking-[0.08em]">Terminal</span>
+        <div className="flex items-center gap-2">
+          {runningGroups.length > 0 && (
+            <span className="flex items-center gap-1 text-[var(--ui-text-tertiary)]">
+              <Loader2 className="size-3 animate-spin" />
+              running · {runningGroups.length}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => void copyAll()}
+            disabled={groups.length === 0}
+            className="rounded-md border border-[var(--ui-stroke-tertiary)] px-1.5 py-0.5 transition-colors hover:bg-[var(--ui-control-hover-background)] hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            title="Copy terminal output"
+          >
+            <span className="font-mono text-[0.7rem]">{copiedAt ? "Copied" : "Copy"}</span>
+          </button>
         </div>
-      ) : (
-        <div className="flex min-w-0 flex-col gap-3 px-3">
-          {groups.map((group, index) => {
-            const display = terminalGroupDisplay(group);
-            return (
-            <section key={`${group.id || "terminal"}-${index}`} className="min-w-0 overflow-hidden rounded-xl border border-card-border bg-card shadow-sm">
-              <div className="flex min-w-0 items-center gap-2 border-b border-border bg-muted/35 px-3 py-2">
-                <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-background text-[11px] font-semibold text-primary">$</span>
-                <p className="min-w-0 flex-1 truncate font-mono text-xs text-foreground" title={display.title}>{display.title}</p>
-                {display.outputLineCount > 0 && <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-[10px] text-muted-foreground">{display.outputLineCount} line{display.outputLineCount === 1 ? "" : "s"}</span>}
-              </div>
-              <div className="min-w-0 overflow-auto py-2">
-                <TerminalOutput chunks={display.chunks} emptyLabel="No output captured for this command." />
-              </div>
-            </section>
-            );
-          })}
-        </div>
-      )}
-      <div ref={endRef} />
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto py-2">
+        {groups.length === 0 ? (
+          <div className="mx-3 flex h-full items-center justify-center rounded-md border border-dashed border-[var(--ui-stroke-tertiary)] p-4">
+            <div className="text-center text-[length:var(--conversation-tool-font-size)] text-[var(--ui-text-tertiary)]">
+              <p className="font-medium text-[var(--ui-text-secondary)]">No terminal output yet</p>
+              <p className="mt-1">Streamed output from Bash / BashOutput / background tasks appears here in order.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="flex min-w-0 flex-col gap-2 px-2.5">
+            {groups.map((group, index) => (
+              <TerminalGroup key={(group.id || "terminal") + "-" + index} group={group} entries={entries} />
+            ))}
+          </div>
+        )}
+        <div ref={endRef} />
+      </div>
     </div>
   );
+}
+
+function TerminalGroup({ group, entries }: { group: { id?: string; chunks: string[] }; entries: TerminalEntry[] }) {
+  const display = terminalGroupDisplay(group);
+  const running = !group.id || isGroupActive(entries, group.id);
+  const exitLabel = display.exitCode !== undefined ? (display.exitCode === 0 ? "ok" : `exit ${display.exitCode}`) : undefined;
+  const [copiedAt, setCopiedAt] = useState<number | null>(null);
+  // Collapsed by default only for finished, successful, noisy groups so the tab
+  // stays scannable; running groups and failures stay open.
+  const [collapsed, setCollapsed] = useState(false);
+  const hasOutput = display.chunks.join("").trim().length > 0;
+
+  const copy = async () => {
+    if (!hasOutput) return;
+    try {
+      await navigator.clipboard.writeText(display.chunks.join(""));
+      setCopiedAt(Date.now());
+      window.setTimeout(() => setCopiedAt(null), 1400);
+    } catch {
+      /* clipboard not available */
+    }
+  };
+
+  const showOutput = hasOutput && !collapsed;
+
+  return (
+    <section className="min-w-0 overflow-hidden rounded-md border border-[var(--ui-stroke-tertiary)] bg-transparent">
+      <div className="flex min-w-0 items-center gap-2 px-2.5 py-1.5 text-[length:var(--conversation-tool-font-size)] text-[var(--ui-text-tertiary)]">
+        <button
+          type="button"
+          onClick={() => hasOutput && setCollapsed((v) => !v)}
+          disabled={!hasOutput}
+          className="flex size-5 shrink-0 items-center justify-center rounded-md text-[var(--ui-text-quaternary)] transition-colors hover:text-foreground disabled:opacity-40"
+          title={collapsed ? "Expand output" : "Minimize output"}
+          aria-label={collapsed ? "Expand output" : "Minimize output"}
+          aria-expanded={hasOutput ? showOutput : undefined}
+        >
+          {hasOutput ? (
+            <ChevronRight className={cn("size-3.5 transition-transform duration-150", showOutput && "rotate-90")} />
+          ) : (
+            <span className="font-mono text-[0.7rem] font-semibold text-primary">$</span>
+          )}
+        </button>
+        <p className="min-w-0 flex-1 truncate font-mono text-foreground" title={display.title}>{display.title || "(no command)"}</p>
+        {running ? (
+          <span className="flex items-center gap-1 text-[var(--ui-text-tertiary)]">
+            <Loader2 className="size-3 animate-spin" />
+            <span className="font-mono text-[0.7rem]">running</span>
+          </span>
+        ) : exitLabel ? (
+          <span
+            className={cn(
+              "rounded-md px-1.5 py-0.5 font-mono text-[0.65rem] uppercase tracking-[0.06em]",
+              display.exitCode === 0
+                ? "text-[var(--ui-text-tertiary)]"
+                : "border border-rose-500/30 text-rose-600 dark:text-rose-400",
+            )}
+          >
+            {exitLabel}
+          </span>
+        ) : null}
+        {display.outputLineCount > 0 && (
+          <span className="hidden font-mono text-[0.65rem] text-[var(--ui-text-tertiary)] sm:inline">{display.outputLineCount} line{display.outputLineCount === 1 ? "" : "s"}</span>
+        )}
+        <button
+          type="button"
+          onClick={() => void copy()}
+          disabled={!hasOutput}
+          className="rounded-md border border-[var(--ui-stroke-tertiary)] px-1.5 py-0.5 transition-colors hover:bg-[var(--ui-control-hover-background)] hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+          title="Copy output"
+        >
+          <span className="font-mono text-[0.7rem]">{copiedAt ? "Copied" : "Copy"}</span>
+        </button>
+      </div>
+      {showOutput && (
+        <div className="min-w-0 overflow-hidden border-t border-[var(--ui-stroke-tertiary)]">
+          <TerminalOutput chunks={display.chunks} emptyLabel="Awaiting output…" />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function isGroupActive(entries: TerminalEntry[], id: string): boolean {
+  // Background/no-id streams are always considered live. For per-call streams,
+  // "live" means the last entry in the group is the most-recent overall entry —
+  // matching the agent.ts stream loop, which appends chunks continuously until
+  // the tool result lands.
+  if (!id) return true;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if ((entries[i].id ?? "") === id) return i === entries.length - 1;
+  }
+  return false;
 }
 
 function terminalGroups(entries: TerminalEntry[]): Array<{ id?: string; chunks: string[] }> {
@@ -159,19 +298,30 @@ function terminalGroups(entries: TerminalEntry[]): Array<{ id?: string; chunks: 
   return groups;
 }
 
-function terminalGroupDisplay(group: { id?: string; chunks: string[] }): { title: string; chunks: string[]; outputLineCount: number } {
+function terminalGroupDisplay(group: { id?: string; chunks: string[] }): { title: string; chunks: string[]; outputLineCount: number; exitCode?: number; timeout?: boolean } {
   const text = group.chunks.join("").replace(/\r/g, "");
   const lines = text.split("\n");
-  const commandLineIndex = lines.findIndex((line) => /…\/workspace\s*>/.test(line));
-  const commandLine = commandLineIndex >= 0 ? lines[commandLineIndex] : undefined;
-  const command = commandLine?.replace(/^.*?…\/workspace\s*>\s*/, "").trim();
-  const outputLines = commandLineIndex >= 0 ? [...lines.slice(0, commandLineIndex), ...lines.slice(commandLineIndex + 1)] : lines;
+  const promptLineIndex = lines.findIndex((line) => /…\/[^\s>]*\s*>|^\$\s/.test(line));
+  const promptLine = promptLineIndex >= 0 ? lines[promptLineIndex] : undefined;
+  const commandMatch = promptLine?.match(/^(?:.…\/[^\s>]*\s*>|>\s?|\$\s?)(.*)$/);
+  const command = commandMatch ? commandMatch[1].trim() : "";
+  const outputLines = promptLineIndex >= 0 ? [...lines.slice(0, promptLineIndex), ...lines.slice(promptLineIndex + 1)] : lines;
   const output = outputLines.join("\n").replace(/\s+$/g, "");
   const title = command || "Terminal output";
+
+  // Detect any exit / timeout marker the agent appends after the command body:
+  // the model-facing result already includes "Exit code: N" / "Command timed out"
+  // when runBash() detects them, so we surface the same info on the group.
+  const exitMatch = /\bExit code:\s*(\d+)\b/.exec(text);
+  const exitCode = exitMatch ? Number.parseInt(exitMatch[1], 10) : undefined;
+  const timeout = /\bCommand timed out\b/.test(text);
+
   return {
     title: title.length > 160 ? `${title.slice(0, 157)}...` : title,
     chunks: output ? [`${output}\n`] : [],
     outputLineCount: output ? output.split("\n").length : 0,
+    exitCode,
+    timeout,
   };
 }
 
@@ -202,16 +352,21 @@ function ReviewTab({ diffs }: { diffs: FileDiffEntry[] }) {
   const [sideOpen, setSideOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const diffSignature = diffs.map((d) => d.filePath).join("|");
+  // Only reset the expanded/search view when the *set of files* changes — not on
+  // every content update — so a live edit to an already-open file doesn't
+  // collapse the diff the user is reading mid-stream.
+  const fileSetSignature = diffs.map((d) => d.filePath).join("|");
   useEffect(() => {
     setExpandedFiles(new Set());
     setQuery("");
-  }, [diffSignature]);
+  }, [fileSetSignature]);
+
+  const matchCount = useMemo(() => countDiffMatches(diffs, query), [diffs, query]);
 
   if (diffs.length === 0) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center">
-        <div className="max-w-sm rounded-xl border border-border bg-card/60 p-5 text-sm text-muted-foreground">
+        <div className="max-w-sm rounded-xl border border-[var(--ui-stroke-tertiary)] bg-[var(--ui-bg-card)] p-5 text-sm text-muted-foreground">
           <GitCompareArrows className="mx-auto mb-3 size-8 text-muted-foreground" />
           <p className="font-medium text-foreground">No changes to review</p>
           <p className="mt-1">Generated file changes update here automatically after edits.</p>
@@ -221,7 +376,6 @@ function ReviewTab({ diffs }: { diffs: FileDiffEntry[] }) {
   }
 
   const allOpen = diffs.length > 0 && expandedFiles.size === diffs.length;
-  const matchCount = countDiffMatches(diffs, query);
 
   const toggleFile = (fp: string) => {
     setExpandedFiles((prev) => {
@@ -521,6 +675,12 @@ function CodeText({ text, query }: { text?: string; query: string }) {
 function buildLineOps(oldText: string, nextText: string): LineOp[] {
   const oldLines = splitDiffLines(oldText);
   const nextLines = splitDiffLines(nextText);
+  if (oldLines.length * nextLines.length > 4_000_000) {
+    return [
+      ...oldLines.map((text, index) => ({ kind: "removed" as const, text, oldLine: index + 1 })),
+      ...nextLines.map((text, index) => ({ kind: "added" as const, text, newLine: index + 1 })),
+    ];
+  }
   const dp = Array.from({ length: oldLines.length + 1 }, () => Array(nextLines.length + 1).fill(0) as number[]);
 
   for (let i = oldLines.length - 1; i >= 0; i--) {

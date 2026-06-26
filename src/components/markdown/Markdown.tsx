@@ -178,13 +178,13 @@ function MarkdownImpl({ content, className, chatId }: { content: string; classNa
       linkSafety={{ enabled: false }}
       components={markdownComponents(chatId)}
       className={cn(
-        "prose-vaultgate max-w-none text-[15px] leading-relaxed",
-        "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:my-3 [&_ul]:pl-6 [&_ol]:my-3 [&_ol]:pl-6 [&_p]:mb-3",
+        "prose-vaultgate max-w-none text-[length:var(--conversation-text-font-size)] leading-relaxed",
+        "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:my-2.5 [&_ul]:pl-6 [&_ol]:my-2.5 [&_ol]:pl-6 [&_p]:mb-2.5",
         "[&_a]:text-primary [&_a]:underline-offset-4 hover:[&_a]:underline",
-        "[&_h1]:mt-7 [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-semibold [&_h1]:tracking-tight",
-        "[&_h2]:mt-7 [&_h2]:mb-3 [&_h2]:border-t [&_h2]:border-border/70 [&_h2]:pt-5 [&_h2]:text-xl [&_h2]:font-semibold",
-        "[&_h3]:mt-5 [&_h3]:mb-2 [&_h3]:text-base [&_h3]:font-semibold",
-        "[&_li]:mb-1.5 [&_li::marker]:text-muted-foreground",
+        "[&_h1]:mt-5 [&_h1]:mb-2.5 [&_h1]:text-xl [&_h1]:font-semibold [&_h1]:tracking-tight",
+        "[&_h2]:mt-5 [&_h2]:mb-2.5 [&_h2]:text-lg [&_h2]:font-semibold",
+        "[&_h3]:mt-4 [&_h3]:mb-2 [&_h3]:text-base [&_h3]:font-semibold",
+        "[&_li]:mb-1 [&_li::marker]:text-muted-foreground",
         "[&_strong]:font-semibold [&_strong]:text-foreground",
         "[&_code]:rounded [&_code]:border [&_code]:border-amber-500/15 [&_code]:bg-amber-500/10 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.88em] [&_code]:text-amber-200",
         "[&_pre]:my-4 [&_pre]:max-h-[32rem] [&_pre]:overflow-auto [&_pre]:rounded-xl [&_pre]:border [&_pre]:border-border [&_pre]:bg-[#090a0d] [&_pre]:p-4 [&_pre]:shadow-inner",

@@ -1,15 +1,20 @@
 "use client";
-import { ArrowLeft, Bot, Boxes, ChevronRight, Folder, PanelLeftOpen, Settings } from "lucide-react";
+import { ArrowLeft, Bot, Boxes, ChevronRight, Folder, PanelLeftOpen, PanelRight, Settings } from "lucide-react";
 import { useUiStore } from "@/lib/store/ui-store";
 import { ThemeToggle } from "./ThemeToggle";
 import { WindowControls } from "./WindowControls";
 import { useChatStore } from "@/lib/store/chat-store";
+import { useWorkspaceStore } from "@/lib/store/workspace-store";
 
 export function TopBar() {
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
   const setInventoryOpen = useUiStore((s) => s.setInventoryOpen);
+  const panelOpen = useWorkspaceStore((s) => s.panelOpen);
+  const panelChatId = useWorkspaceStore((s) => s.activeChatId);
+  const activateWorkspace = useWorkspaceStore((s) => s.activate);
+  const closeWorkspace = useWorkspaceStore((s) => s.closePanel);
 
   const currentChatId = useChatStore((s) => s.currentChatId);
   const chats = useChatStore((s) => s.chats);
@@ -20,6 +25,9 @@ export function TopBar() {
   const backTargetId = currentChat?.parentId ?? fallbackParent?.id;
   const parentTitle = parentChat?.title || fallbackParent?.title || "Parent Chat";
   const isSubAgentChat = Boolean(currentChat?.parentId || currentChat?.type === "subagent");
+  const workspaceChatId = currentChat?.parentId ?? currentChatId;
+  const displayTitle = currentChat?.title || "New session";
+  const workspaceVisible = Boolean(workspaceChatId && panelOpen && panelChatId === workspaceChatId);
 
   return (
     <header className="app-drag-region flex h-[35px] shrink-0 items-center gap-1 bg-sidebar px-2 text-sm">
@@ -62,11 +70,31 @@ export function TopBar() {
           </div>
         </div>
       ) : (
-        <span className="app-no-drag select-none px-1 text-sm font-medium text-foreground/90">VaultGate</span>
+        <div className="app-no-drag flex min-w-0 items-center gap-2 px-1">
+          <span className="select-none text-sm font-semibold tracking-[-0.02em] text-foreground/90">VaultGate</span>
+          <span className="h-3 w-px bg-[var(--ui-stroke-tertiary)]" />
+          <button
+            type="button"
+            className="flex h-6 min-w-0 max-w-[42vw] items-center gap-1 rounded-md px-1.5 text-xs text-[var(--ui-text-secondary)] transition-colors hover:bg-[var(--ui-control-hover-background)] hover:text-foreground"
+            title={displayTitle}
+          >
+            <span className="truncate font-medium">{displayTitle}</span>
+            <ChevronRight className="size-3 rotate-90 text-[var(--ui-text-quaternary)]" />
+          </button>
+        </div>
       )}
 
       <div className="app-no-drag ml-auto flex items-center gap-0.5">
         <ThemeToggle />
+        {workspaceChatId && (
+          <button
+            onClick={() => (workspaceVisible ? closeWorkspace() : activateWorkspace(workspaceChatId, "code"))}
+            className="flex size-6 items-center justify-center rounded-md text-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+            title={workspaceVisible ? "Hide workspace" : "Show workspace"}
+          >
+            <PanelRight className="size-4" />
+          </button>
+        )}
         <button
           onClick={() => setInventoryOpen(true)}
           className="flex size-6 items-center justify-center rounded-md text-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"

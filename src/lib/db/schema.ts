@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS messages (
   blocks         TEXT NOT NULL DEFAULT '[]',
   status         TEXT NOT NULL DEFAULT 'complete',
   model          TEXT,
-  created_at     INTEGER NOT NULL
+  created_at     INTEGER NOT NULL,
+  duration_ms    INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, created_at, id);

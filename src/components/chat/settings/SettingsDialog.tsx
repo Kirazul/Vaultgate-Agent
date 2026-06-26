@@ -1,5 +1,5 @@
 "use client";
-import { X, Settings2, KeyRound, Cpu, BarChart3 } from "lucide-react";
+import { X, Settings2, KeyRound, Cpu, BarChart3, Wrench } from "lucide-react";
 import { useUiStore } from "@/lib/store/ui-store";
 import { useMountTransition } from "@/hooks/use-mount-transition";
 import { cn } from "@/lib/utils";
@@ -7,6 +7,7 @@ import { GeneralTab } from "./GeneralTab";
 import { ProvidersTab } from "./ProvidersTab";
 import { AgentTab } from "./AgentTab";
 import { StatsTab } from "./StatsTab";
+import { ToolsTab } from "./ToolsTab";
 
 interface TabDef {
   id: string;
@@ -18,6 +19,7 @@ interface TabDef {
 const TABS: TabDef[] = [
   { id: "providers", label: "Providers", icon: <KeyRound className="size-3.5" />, component: ProvidersTab },
   { id: "agent",     label: "Agent",     icon: <Cpu className="size-3.5" />, component: AgentTab },
+  { id: "tools",     label: "Tools",     icon: <Wrench className="size-3.5" />, component: ToolsTab },
   { id: "general",   label: "General",   icon: <Settings2 className="size-3.5" />, component: GeneralTab },
   { id: "stats",     label: "Stats",     icon: <BarChart3 className="size-3.5" />, component: StatsTab },
 ];

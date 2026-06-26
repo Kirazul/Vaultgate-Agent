@@ -11,7 +11,6 @@ import { InventoryDialog } from "./InventoryDialog";
 import { WorkspaceHandle, WorkspacePanel } from "./WorkspacePanel";
 import { QuestionCard } from "./QuestionCard";
 import { PlanCard } from "./PlanCard";
-import { ModeTransition } from "./ModeTransition";
 import { TurnStatusLine } from "./TurnStatusLine";
 import { getMessageFileDiffs } from "./ToolCalls";
 import { EMPTY_MESSAGES, EMPTY_QUEUED_MESSAGES, useChatStore } from "@/lib/store/chat-store";
@@ -21,7 +20,7 @@ import { useWorkspaceStore } from "@/lib/store/workspace-store";
 import { useProjectStore } from "@/lib/store/project-store";
 import { useChatStream } from "@/hooks/use-chat-stream";
 import { useMountTransition } from "@/hooks/use-mount-transition";
-import { planApprovalMessage } from "@/lib/chat/plan";
+import { planApprovalMessage, planRevisionMessage } from "@/lib/chat/plan";
 import type { Chat, ChatMode, ChatRequest, Message, PermissionMode, PendingQuestion, StreamEvent } from "@/types";
 import { normalizeToolName } from "@/lib/ai/tool-display";
 import { cn, uid } from "@/lib/utils";
@@ -36,8 +35,8 @@ export function ChatApp() {
   const messages = useChatStore((s) => (currentChatId ? s.messagesByChat[currentChatId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES));
   const newChat = useChatStore((s) => s.newChat);
   const loadChats = useChatStore((s) => s.load);
-  const pendingQuestion = useChatStore((s) => s.pendingQuestion);
-  const pendingPlan = useChatStore((s) => s.pendingPlan);
+  const pendingQuestion = useChatStore((s) => (currentChatId ? s.pendingQuestionByChat[currentChatId] ?? null : null));
+  const pendingPlan = useChatStore((s) => (currentChatId ? s.pendingPlanByChat[currentChatId] ?? null : null));
   const currentChatStreaming = useChatStore((s) => (currentChatId ? Boolean(s.streamingByChat[currentChatId]) : s.isStreaming));
   const chats = useChatStore((s) => s.chats);
   const setMessages = useChatStore((s) => s.setMessages);
@@ -372,12 +371,11 @@ export function ChatApp() {
   const showWorkspaceHandle = Boolean(workspaceChatId && !showPanel && !panelClosing);
 
   return (
-    <div data-mode={mode} suppressHydrationWarning className="mode-root flex h-screen overflow-hidden bg-background text-foreground">
-      <ModeTransition />
+    <div data-mode={mode} suppressHydrationWarning className="mode-root flex h-screen overflow-hidden bg-[var(--ui-bg-chrome)] text-foreground">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 bg-[var(--ui-bg-chrome)]">
           <div className="flex min-w-0 flex-1 flex-col">
             {showWelcome ? (
               <WelcomeScreen chatId={currentChatId} onSend={handleSend} onStop={() => currentChatId && stop(currentChatId)} onAttach={handleAttach} />
@@ -390,7 +388,7 @@ export function ChatApp() {
                     plan={pendingPlan}
                     workspaceChatId={currentChatId!}
                     onApprove={() => handleSend(planApprovalMessage(pendingPlan.file))}
-                    onRequestChanges={(feedback) => handleSend(`Revise the implementation plan with these changes, then call the Plan tool again to show me the updated plan for approval (do not start implementing yet):\n\n${feedback}`)}
+                    onRequestChanges={(feedback) => handleSend(planRevisionMessage(feedback))}
                   />
                 )}
                 {pendingQuestion && pendingQuestion.chatId === currentChatId && !pendingPlan && (
@@ -417,7 +415,7 @@ export function ChatApp() {
           {panelMounted && workspaceChatId && (
             <>
               <div
-                className="hidden w-1.5 cursor-col-resize bg-transparent transition-colors hover:bg-secondary lg:block"
+                className="group hidden w-2 cursor-col-resize bg-transparent lg:block"
                 onPointerDown={(event) => {
                   event.currentTarget.setPointerCapture(event.pointerId);
                   const startX = event.clientX;
@@ -431,8 +429,10 @@ export function ChatApp() {
                   window.addEventListener("pointerup", onUp, { once: true });
                 }}
                 title="Resize workspace panel"
-              />
-              <div className={cn("hidden min-w-[360px] max-w-[72vw] lg:block", panelClosing ? "animate-panel-out" : "animate-panel-in")} style={{ width: panelWidth }}>
+              >
+                <div className="h-full w-px bg-[var(--ui-stroke-tertiary)] transition-colors group-hover:bg-[var(--ui-stroke-primary)]" />
+              </div>
+              <div className={cn("hidden min-w-[360px] max-w-[72vw] border-l border-[var(--ui-stroke-tertiary)] lg:block", panelClosing ? "animate-panel-out" : "animate-panel-in")} style={{ width: panelWidth }}>
                 <WorkspacePanel chatId={workspaceChatId} />
               </div>
             </>
@@ -786,7 +786,7 @@ async function runSideQuestion(chatId: string, prompt: string, label: string) {
   }
 
   const messageId = uid();
-  const displayLabel = `**Side question:** ${label}`;
+  const displayLabel = `/btw ${label}`;
   const message: Message = {
     id: messageId,
     chatId,
@@ -841,7 +841,7 @@ async function runSideQuestion(chatId: string, prompt: string, label: string) {
 
 function sideQuestionBlocks(label: string, builder: BlockBuilder) {
   const blocks = sanitizeToolLeakBlocks(builder.snapshot());
-  const prefix = { type: "text" as const, content: `**Side question:** ${label}` };
+  const prefix = { type: "text" as const, content: `/btw ${label}` };
   return blocks.length > 0 ? [prefix, ...blocks] : [prefix];
 }
 
@@ -948,7 +948,7 @@ function workspaceMutationSignature(messages: Message[]): string {
       if (block.type !== "tool_calls") continue;
       for (const call of block.toolCalls ?? []) {
         const name = normalizeToolName(call.name);
-        if (!["write", "edit", "multiedit", "delete", "move", "bash"].includes(name)) continue;
+        if (!["write", "edit", "multiedit", "applypatch", "delete", "move", "bash"].includes(name)) continue;
         const result = block.results?.find((item) => item.toolCallId === call.id);
         parts.push(`${call.id}:${name}:${result?.status ?? "queued"}:${result?.content.length ?? 0}`);
       }

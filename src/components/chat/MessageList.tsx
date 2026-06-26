@@ -46,19 +46,21 @@ export function MessageList({ chatId, onRegenerate }: { chatId: string; onRegene
   }, [scrollToBottom]);
 
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto scrollbar-none [container-type:size]">
-      <div className="mx-auto flex w-full max-w-3xl flex-col px-4 pt-1">
+    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto scrollbar-none bg-transparent [container-type:size]">
+      <div className="mx-auto flex w-full max-w-[var(--composer-width)] flex-col px-3 pt-3">
         {turns.map((turn, index) => (
           <div
             key={turn[0].id}
-            className={cn("flex flex-col", index === turns.length - 1 && "min-h-[calc(100cqh-2rem)]")}
+            className={cn(
+              "flex flex-col scroll-mt-2",
+              index === turns.length - 1 && "min-h-[calc(100cqh-var(--thread-last-message-clearance))] pb-[var(--thread-last-message-clearance)]",
+            )}
           >
             {turn.map((m) => (
               <MessageBubble key={m.id} message={m} onRegenerate={onRegenerate} />
             ))}
           </div>
         ))}
-        <div className="h-6 shrink-0" />
       </div>
     </div>
   );

@@ -48,6 +48,11 @@ async function init(): Promise<Database> {
   } catch {
     // Best-effort backfill for existing project chats
   }
+  try {
+    db.run("ALTER TABLE messages ADD COLUMN duration_ms INTEGER;");
+  } catch {
+    // Ignore duplicate column errors
+  }
   // Create project indexes after migrations; older databases may not have project_id yet.
   try {
     db.run("CREATE INDEX IF NOT EXISTS idx_chats_project ON chats(project_id, updated_at);");
