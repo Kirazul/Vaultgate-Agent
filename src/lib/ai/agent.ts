@@ -1098,7 +1098,7 @@ async function runGatedToolCall(
 
   // Connected MCP tools bypass the static mode gate after approval policy passes.
   if (call.name.startsWith("mcp__")) {
-    return runMcpToolCall(call, emit);
+    return runMcpToolCall(call, emit, signal);
   }
   if (!isToolAllowed(mode, call.name, canSwitch)) {
     const canonical = canonicalToolName(call.name);
@@ -1159,8 +1159,10 @@ function mcpToolToOpenAI(tool: McpToolDef) {
 async function runMcpToolCall(
   call: PreparedToolCall,
   emit: (e: StreamEvent) => void,
+  signal: AbortSignal,
 ): Promise<ToolExecutionResult> {
   emit({ type: "tool_result", id: call.id, status: "running", content: "" });
+  await sleep(0, signal).catch(() => undefined);
   const result = await callMcpTool(call.name, call.parsed);
   const status = result.isError ? "error" : "completed";
   emit({ type: "tool_result", id: call.id, status, content: result.content });
